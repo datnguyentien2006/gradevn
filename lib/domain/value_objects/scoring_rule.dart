@@ -24,6 +24,9 @@ final class ScoringRule {
 
   double weightAt(int questionIndex) => _weights[questionIndex];
 
+  /// Số câu (độ dài bảng trọng số).
+  int get questionCount => _weights.length;
+
   /// Điểm tối đa tổng — tổng các trọng số.
   double get maxTotal => _weights.fold(0.0, (a, b) => a + b);
 
