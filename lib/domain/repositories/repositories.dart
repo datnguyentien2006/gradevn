@@ -16,10 +16,14 @@ abstract interface class AnswerKeyRepository {
   Future<AnswerKey?> byExamCode(int contestId, String examCode);
   Future<int> insert(AnswerKey key);
   Future<void> delete(int id);
+
+  /// Thêm nhiều key cùng contest: cặp (examCode, answerSequence).
+  Future<void> insertMany(int contestId, List<(String, String)> keys);
 }
 
 abstract interface class ClassRoomRepository {
   Stream<List<ClassRoom>> watchAll();
+  Future<ClassRoom?> byId(int id);
   Future<int> insert(ClassRoom classRoom);
   Future<void> update(ClassRoom classRoom);
   Future<void> delete(int id);

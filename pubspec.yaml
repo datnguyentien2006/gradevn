@@ -29,6 +29,8 @@ dependencies:
 
   # Xử lý ảnh OMR (M2): pure-Dart pipeline (docs §4/§9)
   image: ^4.5.4
+  file_picker: ^13.1.0
+  excel_plus: ^2.29.0
 
 dev_dependencies:
   flutter_test:

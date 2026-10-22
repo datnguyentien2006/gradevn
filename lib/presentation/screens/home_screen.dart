@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gradevn/l10n/generated/app_localizations.dart';
 
+import 'classes_tab.dart';
+import 'contests_tab.dart';
 import 'placeholder_screen.dart';
 
 /// Màn hình chính — NavigationBar 4 tab: Lớp học / Kỳ thi / Kết quả / Thống kê.
@@ -37,8 +39,8 @@ final class _HomeScreenState extends ConsumerState<HomeScreen> {
       body: IndexedStack(
         index: _index,
         children: const <Widget>[
-          _TabPlaceholder(icon: Icons.school_outlined),
-          _TabPlaceholder(icon: Icons.assignment_outlined),
+          ClassesTab(),
+          ContestsTab(),
           _TabPlaceholder(icon: Icons.fact_check_outlined),
           _TabPlaceholder(icon: Icons.bar_chart_outlined),
         ],
@@ -73,6 +75,7 @@ final class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 }
 
+/// Placeholder tab (Kết quả → M3, Thống kê → M4).
 final class _TabPlaceholder extends StatelessWidget {
   const _TabPlaceholder({required this.icon});
 
@@ -81,19 +84,15 @@ final class _TabPlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final empty = switch (icon) {
-      Icons.school_outlined => l10n.emptyClasses,
-      Icons.assignment_outlined => l10n.emptyContests,
-      Icons.fact_check_outlined => l10n.emptyResults,
-      _ => l10n.navStats,
-    };
+    final text =
+        icon == Icons.fact_check_outlined ? l10n.emptyResults : l10n.navStats;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 56, color: Theme.of(context).colorScheme.primary),
           const SizedBox(height: 12),
-          Text(empty, style: Theme.of(context).textTheme.bodyLarge),
+          Text(text, style: Theme.of(context).textTheme.bodyLarge),
         ],
       ),
     );
