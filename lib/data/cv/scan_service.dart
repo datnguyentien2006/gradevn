@@ -1,9 +1,17 @@
 import 'dart:typed_data';
+import 'dart:ui' show Size;
 
 import '../../domain/entities/sheet_spec.dart';
 import '../../domain/services/omr_decoder.dart';
 import '../../domain/services/sheet_layout.dart';
 import 'omr_image_pipeline.dart';
+import 'sheet_alignment.dart';
+
+/// Kích thước trang chuẩn của hệ thống OMR (A4 @150dpi).
+///
+/// Mọi phiếu chụp thật đều được nắn phẳng về đúng kích thước này trước khi
+/// đo mật độ, nhờ vậy toạ độ [SheetLayout] luôn khớp.
+const Size omrPageSize = SheetLayout.standardPage;
 
 /// Kết quả quét một phiếu (chưa chấm điểm, chưa lưu DB).
 final class SheetScan {
@@ -40,6 +48,22 @@ final class SheetScan {
   String get examCode => OmrDecoder.normalizeCode(examCodeRaw);
 }
 
+/// Kết quả quét 1 ảnh chụp thật: 4 góc khung đã phát hiện + ảnh nắn phẳng +
+/// kết quả đo/giải mã trên ảnh nắn phẳng.
+final class PhotoScan {
+  const PhotoScan({
+    required this.scan,
+    required this.quad,
+    required this.warpedBytes,
+  });
+
+  final SheetScan scan;
+  final AlignmentQuad quad;
+
+  /// Ảnh đã nắn phẳng về [omrPageSize] (PNG) — dùng làm ảnh gốc khi lưu DB.
+  final Uint8List warpedBytes;
+}
+
 /// Ghép pipeline đo mật độ + bộ giải mã thành một bước "quét phiếu".
 ///
 /// Interface/pipeline tách rời để M3 có thể thay bằng opencv_dart mà không đổi
@@ -48,10 +72,31 @@ final class OmrScanService {
   const OmrScanService({
     this.pipeline = const DartOmrImagePipeline(),
     this.decoder = const OmrDecoder(),
+    this.detector = const FrameAlignmentDetector(),
+    this.warper = const PerspectiveWarper(),
   });
 
   final OmrImagePipeline pipeline;
   final OmrDecoder decoder;
+  final FrameAlignmentDetector detector;
+  final PerspectiveWarper warper;
+
+  /// Quét ảnh CHỤP THẬT (có thể chếch/nghiêng): phát hiện khung → nắn phẳng
+  /// về trang chuẩn → đo + giải mã. Trả về null nếu không tìm thấy khung.
+  PhotoScan? scanPhoto(
+    Uint8List imageBytes, {
+    required SheetSpec spec,
+    OmrTuning tuning = const OmrTuning(),
+  }) {
+    final stopwatch = Stopwatch()..start();
+    final quad = detector.detect(imageBytes);
+    if (quad == null) return null;
+    final layout = SheetLayout.forSpec(spec, page: omrPageSize);
+    final warped = warper.warpRectify(imageBytes, quad: quad, outputSize: layout.page);
+    final scanResult = scan(warped, layout: layout, spec: spec, tuning: tuning);
+    stopwatch.stop();
+    return PhotoScan(scan: scanResult, quad: quad, warpedBytes: warped);
+  }
 
   SheetScan scan(
     Uint8List imageBytes, {

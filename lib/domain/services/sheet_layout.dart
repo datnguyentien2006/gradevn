@@ -139,6 +139,11 @@ final class SheetLayout {
   static const int digitRows = 6;
   static const int digitColumns = 10;
 
+  /// Kích thước trang chuẩn của toàn bộ hệ thống (A4 @150dpi).
+  ///
+  /// Mọi ảnh chụp thật được nắn phẳng về đúng cỡ này trước khi đo mật độ.
+  static const Size standardPage = Size(1240, 1754);
+
   final SheetSpec spec;
   final Size page;
   final int rowsPerAnswerBlock;

@@ -10,14 +10,13 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' show Rect, Size;
 
+import 'package:gradevn/data/cv/sheet_painter.dart';
 import 'package:gradevn/domain/entities/sheet_spec.dart';
 import 'package:gradevn/domain/services/sheet_layout.dart';
 import 'package:image/image.dart' as img;
 
 /// Kích thước trang fixture (A4 @150dpi ≈ 1240×1754).
 const Size fixturePageSize = Size(1240, 1754);
-
-const int _ringGray = 95;
 
 final class FixtureDefinition {
   const FixtureDefinition({
@@ -247,6 +246,10 @@ Uint8List renderFixture(FixtureDefinition fixture) {
 
   if (fixture.noisy) _applySpeckles(image, seed: 42);
 
+  // Khung căn chỉnh vẽ SAU CÙNG (bản thật in ra giấy cũng có khung này; nó là
+  // mốc phát hiện ở M3 nên phải liền nét, không bị nhiễu phá).
+  drawFrame(image, page: fixturePageSize);
+
   return img.encodePng(image, level: 6);
 }
 
@@ -285,23 +288,9 @@ void _drawDigitGrid(img.Image image, Rect grid, String code) {
 }
 
 /// Vẽ một bong bóng tròn: vành xám 2px; nếu [filled] thì tô đen lõi.
+/// (Ủy thác cho painter dùng chung — chi tiết xem `lib/data/cv/sheet_painter.dart`.)
 void _drawBubble(img.Image image, Rect cell, {required bool filled}) {
-  final cx = (cell.left + cell.width / 2).round();
-  final cy = (cell.top + cell.height / 2).round();
-  final radius = (math.min(cell.width, cell.height) * 0.36).round();
-  final ring = img.ColorRgb8(_ringGray, _ringGray, _ringGray);
-  img.drawCircle(image, x: cx, y: cy, radius: radius, color: ring);
-  img.drawCircle(image, x: cx, y: cy, radius: radius - 1, color: ring);
-  if (filled) {
-    final fillRadius = (math.min(cell.width, cell.height) * 0.20).round();
-    img.fillCircle(
-      image,
-      x: cx,
-      y: cy,
-      radius: fillRadius,
-      color: img.ColorRgb8(0, 0, 0),
-    );
-  }
+  drawBubble(image, cell, filled: filled);
 }
 
 /// Gradient sáng→tối từ trái sang phải (mô phỏng bóng đổ/ánh sáng lệch).
