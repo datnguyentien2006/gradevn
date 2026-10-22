@@ -1,22 +1,26 @@
 // Bộ sinh fixture phiếu trả lời tổng hợp (chạy trong flutter test — cần dart:ui).
 //
-// Fixture được render từ CHÍNH SheetLayout của ứng dụng nên toạ độ ô luôn khớp
-// với pipeline đọc ảnh. Đây là bộ hiệu chuẩn/hồi quy gốc của GradeVN, không
-// phải bản sao phiếu của ứng dụng tham khảo.
+// Fixture được render từ CHÍNH SheetLayout + SheetTemplate của ứng dụng
+// (hình học khung mốc đo từ PhieuTN40cau.jpg) nên toạ độ ô luôn khớp với
+// pipeline đọc ảnh. Đây là bộ hiệu chuẩn/hồi quy gốc của GradeVN.
+//
+// Ghi chú R1: phiếu "bộ đề" (ministry20) đã bị loại khỏi bộ fixture — template
+// in thật của dạng đó người dùng sẽ cung cấp sau; logic chấm nhiều phần vẫn
+// được kiểm tra bằng test tổng hợp (grader_test.dart).
 
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
-import 'dart:ui' show Rect, Size;
+import 'dart:ui' show Size;
 
 import 'package:gradevn/data/cv/sheet_painter.dart';
 import 'package:gradevn/domain/entities/sheet_spec.dart';
 import 'package:gradevn/domain/services/sheet_layout.dart';
 import 'package:image/image.dart' as img;
 
-/// Kích thước trang fixture (A4 @150dpi ≈ 1240×1754).
-const Size fixturePageSize = Size(1240, 1754);
+/// Trang chuẩn xử lý của pipeline (marker frame × 0.5 = 1156×1705).
+final Size fixturePageSize = SheetLayout.standardPage;
 
 final class FixtureDefinition {
   const FixtureDefinition({
@@ -38,10 +42,10 @@ final class FixtureDefinition {
   /// Đáp án đúng dùng để kiểm tra Grader.
   final String answerKey;
 
-  /// Chuỗi 6 chữ số ở lưới số báo danh.
+  /// Chuỗi chữ số in trên lưới số báo danh (6 lưới của template TN40).
   final String studentCodeRaw;
 
-  /// Chuỗi 6 chữ số ở lưới mã đề.
+  /// Chuỗi chữ số in trên lưới mã đề (3 lưới).
   final String examCodeRaw;
 
   /// Có phủ gradient + đốm nhiễu hay không.
@@ -57,12 +61,6 @@ final class FixtureDefinition {
           'questionCount': spec.questionCount,
           'answerChoices': spec.answerChoices,
           'maxScore': spec.maxScore,
-          'partOneCount': spec.partOneCount,
-          'partTwoCount': spec.partTwoCount,
-          'partThreeCount': spec.partThreeCount,
-          'partOneWeight': spec.partOneWeight,
-          'partTwoWeight': spec.partTwoWeight,
-          'partThreeWeight': spec.partThreeWeight,
         },
         'studentCodeRaw': studentCodeRaw,
         'examCodeRaw': examCodeRaw,
@@ -75,38 +73,13 @@ final class FixtureDefinition {
   Map<String, Object?> _expectedScores() {
     final key = answerKey.toUpperCase();
     var correct = 0;
-    final partCorrect = <String, int>{'1': 0, '2': 0, '3': 0};
-    final p1 = spec.partOneCount ?? 0;
-    final p2 = spec.partTwoCount ?? 0;
     for (var i = 0; i < answers.length && i < key.length; i++) {
       if (answers[i] != null && answers[i]!.toUpperCase() == key[i]) {
         correct++;
-        if (spec.formType == SheetFormType.ministry) {
-          final part = i < p1 ? '1' : (i < p1 + p2 ? '2' : '3');
-          partCorrect[part] = partCorrect[part]! + 1;
-        }
       }
     }
-    if (spec.formType == SheetFormType.ministry) {
-      final scores = <String, double>{
-        '1': _round2(partCorrect['1']! *
-            (spec.partOneWeight ?? 0) /
-            math.max(1, spec.partOneCount ?? 1)),
-        '2': _round2(partCorrect['2']! *
-            (spec.partTwoWeight ?? 0) /
-            math.max(1, spec.partTwoCount ?? 1)),
-        '3': _round2(partCorrect['3']! *
-            (spec.partThreeWeight ?? 0) /
-            math.max(1, spec.partThreeCount ?? 1)),
-      };
-      final total = _round2(scores.values.fold(0.0, (a, b) => a + b));
-      return <String, Object?>{
-        'score': total,
-        'partScores': scores,
-        'correctCount': correct,
-      };
-    }
-    final score = _round2(correct * spec.maxScore / math.max(1, spec.questionCount));
+    final score =
+        _round2(correct * spec.maxScore / math.max(1, spec.questionCount));
     return <String, Object?>{
       'score': score,
       'partScores': <String, Object?>{},
@@ -143,44 +116,7 @@ FixtureDefinition standardFixture() {
     answers: answers,
     answerKey: key.join(),
     studentCodeRaw: '000413',
-    examCodeRaw: '000001',
-  );
-}
-
-FixtureDefinition ministryFixture() {
-  const p1 = 4;
-  const p2 = 10;
-  const p3 = 6;
-  const total = p1 + p2 + p3;
-  final answers = <String?>[
-    for (var i = 0; i < total; i++) 'ABCD'[(i * 2 + 3) % 4],
-  ];
-  answers[2] = null;
-  final key = <String>[
-    for (var i = 0; i < total; i++) answers[i] ?? 'A',
-  ];
-  key[0] = 'D'; // Phần I sai 1
-  key[7] = 'A'; // Phần II sai 1
-  key[17] = 'B'; // Phần III sai 1
-  return FixtureDefinition(
-    name: 'ministry20',
-    spec: const SheetSpec(
-      formType: SheetFormType.ministry,
-      orientation: SheetOrientation.portrait,
-      questionCount: total,
-      answerChoices: 4,
-      maxScore: 10,
-      partOneCount: p1,
-      partTwoCount: p2,
-      partThreeCount: p3,
-      partOneWeight: 4,
-      partTwoWeight: 5,
-      partThreeWeight: 1,
-    ),
-    answers: answers,
-    answerKey: key.join(),
-    studentCodeRaw: '000888',
-    examCodeRaw: '000123',
+    examCodeRaw: '001',
   );
 }
 
@@ -205,31 +141,33 @@ FixtureDefinition noisyFixture() {
     answers: answers,
     answerKey: key.join(),
     studentCodeRaw: '000042',
-    examCodeRaw: '000007',
+    examCodeRaw: '007',
     noisy: true,
   );
 }
 
 List<FixtureDefinition> allFixtures() => <FixtureDefinition>[
       standardFixture(),
-      ministryFixture(),
       noisyFixture(),
     ];
 
-/// Render một fixture thành PNG.
+/// Render một fixture thành PNG: phiếu quét chuẩn (mốc + bong bóng + chữ số)
+/// rồi tô đen các ô đã "tô phấn" theo đáp án.
 Uint8List renderFixture(FixtureDefinition fixture) {
-  final image = img.Image(
-    width: fixturePageSize.width.toInt(),
-    height: fixturePageSize.height.toInt(),
-  );
-  img.fill(image, color: img.ColorRgb8(255, 255, 255));
-
-  if (fixture.noisy) _applyGradient(image);
-
   final layout = fixture.layout;
+  final image = img.decodePng(renderScanSheet(layout))!;
 
-  _drawDigitGrid(image, layout.studentCodeGrid, fixture.studentCodeRaw);
-  _drawDigitGrid(image, layout.examCodeGrid, fixture.examCodeRaw);
+  // Tô lưới chữ số: mật độ block là [lưới][giá trị]; code theo chuỗi.
+  void digitGrid(DigitGridGeometry grid, String code) {
+    for (var slot = 0; slot < grid.slots; slot++) {
+      final digit = slot < code.length ? int.tryParse(code[slot]) : null;
+      if (digit == null) continue;
+      drawBubble(image, grid.cellRect(slot, digit), filled: true);
+    }
+  }
+
+  digitGrid(layout.studentCodeGrid, fixture.studentCodeRaw);
+  digitGrid(layout.examCodeGrid, fixture.examCodeRaw);
 
   for (var q = 0; q < layout.totalQuestions; q++) {
     final block = layout.answerBlocks.firstWhere(
@@ -239,16 +177,15 @@ Uint8List renderFixture(FixtureDefinition fixture) {
     final marked = q < fixture.answers.length ? fixture.answers[q] : null;
     final markedCol =
         marked == null ? -1 : 'ABCDEFGHIJ'.indexOf(marked.toUpperCase());
-    for (var col = 0; col < block.columns; col++) {
-      _drawBubble(image, block.cellRect(row, col), filled: col == markedCol);
+    if (markedCol >= 0) {
+      drawBubble(image, block.cellRect(row, markedCol), filled: true);
     }
   }
 
-  if (fixture.noisy) _applySpeckles(image, seed: 42);
-
-  // Khung căn chỉnh vẽ SAU CÙNG (bản thật in ra giấy cũng có khung này; nó là
-  // mốc phát hiện ở M3 nên phải liền nét, không bị nhiễu phá).
-  drawFrame(image, page: fixturePageSize);
+  if (fixture.noisy) {
+    _applyGradient(image);
+    _applySpeckles(image, seed: 42);
+  }
 
   return img.encodePng(image, level: 6);
 }
@@ -260,6 +197,16 @@ const String fixturesRoot = 'test/fixtures';
 Map<String, String> ensureFixtures() {
   final pngDir = Directory('$fixturesRoot/generated')..createSync(recursive: true);
   final jsonDir = Directory('$fixturesRoot/expected')..createSync(recursive: true);
+  // Dọn fixture cũ đã lỗi thời (ministry20 của bố cục M2).
+  for (final dir in [pngDir, jsonDir]) {
+    for (final stale in [
+      '${dir.path}/ministry20.png',
+      '${dir.path}/ministry20.json',
+    ]) {
+      final f = File(stale);
+      if (f.existsSync()) f.deleteSync();
+    }
+  }
   final paths = <String, String>{};
   for (final fixture in allFixtures()) {
     final pngPath = '${pngDir.path}/${fixture.name}.png';
@@ -275,22 +222,6 @@ Map<String, String> ensureFixtures() {
 Map<String, dynamic> readExpectedJson(String name) {
   final file = File('$fixturesRoot/expected/$name.json');
   return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-}
-
-void _drawDigitGrid(img.Image image, Rect grid, String code) {
-  for (var row = 0; row < SheetLayout.digitRows; row++) {
-    final digit = row < code.length ? int.tryParse(code[row]) : null;
-    for (var col = 0; col < SheetLayout.digitColumns; col++) {
-      final cell = SheetLayout.digitCellRect(grid, row, col);
-      _drawBubble(image, cell, filled: digit != null && digit == col);
-    }
-  }
-}
-
-/// Vẽ một bong bóng tròn: vành xám 2px; nếu [filled] thì tô đen lõi.
-/// (Ủy thác cho painter dùng chung — chi tiết xem `lib/data/cv/sheet_painter.dart`.)
-void _drawBubble(img.Image image, Rect cell, {required bool filled}) {
-  drawBubble(image, cell, filled: filled);
 }
 
 /// Gradient sáng→tối từ trái sang phải (mô phỏng bóng đổ/ánh sáng lệch).

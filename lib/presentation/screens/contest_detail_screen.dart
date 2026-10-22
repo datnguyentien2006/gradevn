@@ -189,7 +189,7 @@ final class ContestDetailScreen extends ConsumerWidget {
     try {
       final layout =
           SheetLayout.forSpec(contest.sheetSpec, page: SheetLayout.standardPage);
-      final png = renderBlankSheet(layout);
+      final png = await renderBlankSheet(layout);
       final doc = pw.Document();
       doc.addPage(pw.Page(
         pageFormat: pdf_format.PdfPageFormat.a4,

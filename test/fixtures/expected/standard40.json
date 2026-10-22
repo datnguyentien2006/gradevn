@@ -5,16 +5,10 @@
     "orientation": "portrait",
     "questionCount": 40,
     "answerChoices": 4,
-    "maxScore": 10.0,
-    "partOneCount": null,
-    "partTwoCount": null,
-    "partThreeCount": null,
-    "partOneWeight": null,
-    "partTwoWeight": null,
-    "partThreeWeight": null
+    "maxScore": 10.0
   },
   "studentCodeRaw": "000413",
-  "examCodeRaw": "000001",
+  "examCodeRaw": "001",
   "answers": [
     "B",
     "A",

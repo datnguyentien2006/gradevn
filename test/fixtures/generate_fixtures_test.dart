@@ -8,7 +8,7 @@ import 'fixture_builder.dart';
 void main() {
   test('sinh và kiểm tra fixture PNG + JSON', () {
     final paths = ensureFixtures();
-    expect(paths.length, 3);
+    expect(paths.length, 2);
 
     for (final entry in paths.entries) {
       final pngFile = File(entry.value);

@@ -111,12 +111,14 @@ final class DartOmrImagePipeline implements OmrImagePipeline {
       blocks.add(DensityBlock(values));
     }
 
-    DensityBlock grid(Rect rect) {
+    DensityBlock digitGrid(DigitGridGeometry grid) {
+      // DensityBlock cho lưới chữ số: [slot (cột chữ số)][value (0..9)] —
+      // đúng thứ tự OmrDecoder.decodeDigits mong đợi (row = lưới, col = giá trị).
       final values = List.generate(
-        SheetLayout.digitRows,
-        (row) => List.generate(
-          SheetLayout.digitColumns,
-          (col) => measureRect(SheetLayout.digitCellRect(rect, row, col)),
+        grid.slots,
+        (slot) => List.generate(
+          grid.rows,
+          (value) => measureRect(grid.cellRect(slot, value)),
         ),
       );
       return DensityBlock(values);
@@ -124,8 +126,8 @@ final class DartOmrImagePipeline implements OmrImagePipeline {
 
     return SheetDensities(
       answerBlocks: List.unmodifiable(blocks),
-      studentCodeGrid: grid(layout.studentCodeGrid),
-      examCodeGrid: grid(layout.examCodeGrid),
+      studentCodeGrid: digitGrid(layout.studentCodeGrid),
+      examCodeGrid: digitGrid(layout.examCodeGrid),
     );
   }
 

@@ -1,5 +1,4 @@
 import '../entities/sheet_spec.dart';
-import 'sheet_layout.dart';
 
 /// Ma trận mật độ mực (0..1) của một khối ô tròn.
 ///
@@ -99,10 +98,10 @@ final class OmrDecoder {
     return best;
   }
 
-  /// Giải mã một lưới 6×10 chữ số (số báo danh hoặc mã đề).
+  /// Giải mã một lưới chữ số (SBD 6×10 hoặc mã đề 3×10).
   ///
-  /// Mỗi hàng là một vị trí chữ số; cột được tô = giá trị chữ số. Hàng không
-  /// xác định được trả về '?'.
+  /// Mỗi hàng là một vị trí chữ số (lưới); cột được tô = giá trị chữ số. Hàng
+  /// không xác định được trả về '?'.
   String decodeDigits(DensityBlock grid) {
     final buffer = StringBuffer();
     for (var row = 0; row < grid.rows; row++) {
@@ -133,7 +132,4 @@ final class OmrDecoder {
     }
     return cleaned;
   }
-
-  /// Số hàng của lưới chữ số (tương ứng SheetLayout.digitRows).
-  static int get digitRows => SheetLayout.digitRows;
 }

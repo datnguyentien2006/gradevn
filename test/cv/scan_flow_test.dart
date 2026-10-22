@@ -39,7 +39,7 @@ void main() {
     final result = graded!;
     // Đáp án decode khớp chính xác fixture đã tô.
     expect(result.photo.scan.answers, fixture.answers);
-    // Key khớp mã đề in trên phiếu '000001' → chuẩn hoá '1'.
+    // Key khớp mã đề in trên phiếu '001' → chuẩn hoá '1'.
     expect(result.usedKey?.id, keys.single.id);
     expect(result.usedExamCode, fixture.examCodeRaw);
     expect(result.usedBestGuessKey, isFalse);
@@ -50,37 +50,6 @@ void main() {
     expect(result.result.score, closeTo((expected['score'] as num).toDouble(), 1e-9));
     expect(result.result.correctCount, expected['correctCount']);
     expect(result.result.unansweredCount, 2);
-  });
-
-  test('phiếu bộ đề (ministry20): chấm điểm + điểm từng phần khớp sidecar', () {
-    final fixture = ministryFixture();
-    final contest = _contestFromFixture(fixture);
-    final photo = _scanOf(fixture, contest);
-    expect(photo, isNotNull);
-
-    final graded = gradeScan(
-      contest: contest,
-      keys: <AnswerKey>[_keyFor(fixture)],
-      candidateStudents: const <Student>[],
-      chosen: photo!.scan.answers,
-      studentCodeRaw: photo.scan.studentCodeRaw,
-      examCodeRaw: photo.scan.examCodeRaw,
-      photo: photo,
-    );
-
-    final expected = readExpectedJson(fixture.name)['expected'] as Map<String, dynamic>;
-    expect(graded.result.score,
-        closeTo((expected['score'] as num).toDouble(), 1e-9));
-    final expectedParts = expected['partScores'] as Map<String, dynamic>;
-    expect(graded.result.partScores.length, expectedParts.length);
-    for (final entry in expectedParts.entries) {
-      expect(graded.result.partScores[entry.key],
-          closeTo((entry.value as num).toDouble(), 1e-9),
-          reason: 'Sai điểm phần ${entry.key}');
-    }
-    // Không có danh sách lớp → không gắn học sinh, nhưng vẫn đọc được SBD.
-    expect(graded.student, isNull);
-    expect(graded.photo.scan.studentCode, '888');
   });
 
   test('không có key nào: điểm 0, mọi câu đều null (không ném lỗi)', () {
@@ -124,7 +93,7 @@ void main() {
       candidateStudents: const <Student>[],
       chosen: photo.scan.answers,
       studentCodeRaw: photo.scan.studentCodeRaw,
-      examCodeRaw: '??????', // không đọc được mã đề
+      examCodeRaw: '???', // không đọc được mã đề
       photo: photo,
     );
 
@@ -133,7 +102,7 @@ void main() {
     expect(graded.usedExamCode, correctKey.examCode);
   });
 
-  test('ảnh không có khung căn chỉnh → null (gợi ý cắt/chụp lại)', () async {
+  test('ảnh không đủ 4 mốc → null (gợi ý chụp lại hoặc tự ghim mốc)', () async {
     final blank = img.Image(width: 600, height: 800);
     img.fill(blank, color: img.ColorRgb8(255, 255, 255));
     final bytes = Uint8List.fromList(img.encodePng(blank));

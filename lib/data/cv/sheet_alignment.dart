@@ -1,22 +1,24 @@
-// Thuật toán CĂN CHỈNH ảnh chụp phiếu — THIẾT KẾ GỐC của GradeVN.
+// Thuật toán CĂN CHỈNH ảnh chụp phiếu — THIẾT KẾ GỐC của GradeVN (R1).
 //
-// Quan sát: phiếu có dải khung đen liền quanh 4 mép (xem sheet_painter.dart
-// / FrameSpec). Ảnh chụp điện thoại làm phiếu bị dịch/chếch/nghiêng nhẹ →
-// trước khi đo mật độ phải đưa ảnh về đúng bố cục trang chuẩn.
+// Phiếu TN40 có 12 ô vuông đen ĐẶC in quanh nội dung (xem SheetTemplate):
+// 4 ô lớn ở 4 góc khung + 2 ô lớn giữa 2 biên + 6 ô nhỏ bên trong. Pipeline
+// căn chỉnh không đòi phiếu nằm gọn trong một khung chữ nhật nữa:
 //
-// Các bước (thuần Dart, không OpenCV):
-//  1. Thu nhỏ ảnh (≈ targetDownscaleWidth px rộng) cho nhẹ.
-//  2. Ngưỡng hoá "tối" theo độ sáng trung bình toàn ảnh (bám theo điều kiện
-//     sáng, đỡ bị gradient gradient sáng/tối đánh lừa).
-//  3. Profile: hàng/cột có dải tối chạy gần hết chiều dài → đó là 4 mép khung
-//     (mọi tạp điểm lẻ đều không đủ "chạy dài").
-//  4. Tinh chỉnh 4 góc ở độ phân giải đầy đủ: quanh ước lượng mỗi góc, chọn
-//     điểm tối có cả "đoạn ngang tối" và "đoạn dọc tối" chạm tới nó.
-//  5. Giải homography 4 góc → 4 góc trang chuẩn, warp lại bằng nội suy song
-//     tuyến (iceiling: hoạ ngược ảnh đích → ảnh gốc).
+//  1. Thu nhỏ ảnh (≈ targetWidth px rộng cho khối lượng tính toán ổn định).
+//  2. Ngưỡng hoá "tối" theo độ sáng trung bình toàn ảnh.
+//  3. Connected components trên mask tối → lọc "ô vuông đặc": gần vuông
+//     (aspect 0.7..1.4), fill ≥ 0.86 (ô tròn tô chỉ đạt π/4 ≈ 0.785), cỡ hợp lệ
+//     theo template, và có ≥ 3/4 góc bbox tối (hình tròn thiếu góc).
+//  4. Chọn 4 mốc góc: mỗi phần tư ảnh (theo tâm các ứng viên) lấy ứng viên
+//     XA TÂM NHẤT → thứ tự tl/tr/br/bl. Ít hơn 4 mốc tin cậy → null
+//     (UI rơi về CropReviewScreen: người dùng tự ghim 4 ô vuông).
+//  5. Homography từ 4 TÂM MỐC về 4 góc trang chuẩn, warp bằng nội suy song
+//     tuyến — tự xử lý xoay ±30°, chụp chếch, phiếu không chiếm trọn khung.
 //
-// Ảnh chụp phải đặt phiếu trên nền đủ sáng, khung không bị che quá nhiều —
-// chỉ dẫn chụp ở ScanScreen cũng nhắc điều kiện này.
+// Bản chất thuần Dart, không OpenCV; chạy trong isolate cùng pipeline đo.
+//
+// ignore_for_file: avoid_print — chỉ dùng trong nhánh `debug` để hiệu chỉnh
+// ngưỡng phát hiện, không chạy khi chấm phiếu bình thường.
 
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -24,10 +26,9 @@ import 'dart:ui' show Offset, Size;
 
 import 'package:image/image.dart' as img;
 
-import '../../domain/services/sheet_layout.dart';
-import 'sheet_painter.dart';
+import '../../domain/services/sheet_template.dart';
 
-/// 4 góc khung phiếu trên ảnh gốc: [tl, tr, br, bl] (theo kim đồng hồ).
+/// 4 tâm mốc trên ảnh gốc: [tl, tr, br, bl] (theo kim đồng hồ).
 final class AlignmentQuad {
   const AlignmentQuad(this.tl, this.tr, this.br, this.bl);
 
@@ -51,6 +52,19 @@ final class AlignmentQuad {
 
   @override
   String toString() => 'AlignmentQuad(tl:$tl, tr:$tr, br:$br, bl:$bl)';
+}
+
+/// Kết quả phát hiện mốc: quad (null khi < 4 mốc tin cậy) + toàn bộ ứng viên
+/// ô vuông (toạ độ ảnh gốc) để UI vẽ overlay trực tiếp.
+final class MarkerDetection {
+  const MarkerDetection({required this.quad, required this.candidates});
+
+  final AlignmentQuad? quad;
+
+  /// Tâm các ứng viên ô vuông (toạ độ ảnh gốc, px thật).
+  final List<Offset> candidates;
+
+  bool get hasAllMarkers => quad != null;
 }
 
 /// Ma trận homography 3×3 (9 phần tử, hàng-chính; h8 mặc định = 1).
@@ -138,51 +152,74 @@ List<double>? _solveLinear8(List<List<double>> a, List<double> b) {
   return [for (var i = 0; i < n; i++) m[i][n]];
 }
 
-/// Chạy dải tối liên tiếp theo chiều (dx,dy) kể từ (x,y), bỏ luôn điểm đầu.
-int _darkRun(bool Function(int, int) isDark, int x, int y, int dx, int dy, int cap) {
-  var run = 0;
-  var cx = x + dx;
-  var cy = y + dy;
-  while (run < cap && isDark(cx, cy)) {
-    run++;
-    cx += dx;
-    cy += dy;
-  }
-  return run;
-}
-
-/// Phát hiện khung phiếu trên ảnh chụp → 4 góc; null khi không tìm thấy.
-final class FrameAlignmentDetector {
-  const FrameAlignmentDetector({
-    this.targetDownscaleWidth = 180,
-    this.minFrameRunRatio = 0.55,
+/// Ứng viên ô vuông mốc ở ảnh THU NHỎ.
+final class _SquareCandidate {
+  _SquareCandidate({
+    required this.minX,
+    required this.minY,
+    required this.maxX,
+    required this.maxY,
   });
 
-  final int targetDownscaleWidth;
-  final double minFrameRunRatio;
+  final int minX;
+  final int minY;
+  final int maxX;
+  final int maxY;
 
-  AlignmentQuad? detect(Uint8List imageBytes) {
+  double get cx => (minX + maxX) / 2;
+  double get cy => (minY + maxY) / 2;
+  int get bw => maxX - minX + 1;
+  int get bh => maxY - minY + 1;
+}
+
+/// Phát hiện 4 ô vuông mốc góc trên ảnh chụp phiếu; null khi thiếu mốc tin cậy.
+final class SheetMarkerDetector {
+  const SheetMarkerDetector({this.targetWidth = 640, this.debug = false});
+
+  /// Bề rộng ảnh sau thu nhỏ — đủ nhìn ô mốc (≥ ~14 px) mà BFS vẫn nhanh.
+  final int targetWidth;
+
+  /// In thống kê khi chẩn đoán (build cục bộ khi hiệu chỉnh ngưỡng/lọc).
+  final bool debug;
+
+  MarkerDetection detect(
+    Uint8List imageBytes, {
+    SheetTemplate? template,
+  }) {
+    final tpl = template ?? SheetTemplate.tn40Standard;
     final decoded = img.decodeImage(imageBytes);
-    if (decoded == null) return null;
-    final gray = img.grayscale(decoded);
-    final w = gray.width;
-    final h = gray.height;
-    if (w < 80 || h < 80) return null;
+    if (decoded == null) {
+      return const MarkerDetection(quad: null, candidates: []);
+    }
+    final w = decoded.width;
+    final h = decoded.height;
+    if (w < 120 || h < 120) {
+      return const MarkerDetection(quad: null, candidates: []);
+    }
+    if (debug) print('detect: ảnh $w×$h');
 
-    final f = math.max(1, w ~/ targetDownscaleWidth);
+    final f = math.max(1, (w / targetWidth).floor());
     final dw = w ~/ f;
     final dh = h ~/ f;
 
-    // Độ xám nhanh theo pixel (mảng bytes, dải RGB đã grayscale hoá bằng
-    // lệnh grayscale nên r=g=b).
-    final channels = gray.numChannels;
-    final bytes = gray.getBytes();
+    // Độ xám thô: lấy kênh đầu (ảnh chụp RGB; luminance đầy đủ không cần thiết
+    // cho bước lọc ô vuông đen).
+    final bytes = decoded.getBytes();
+    final channels = decoded.numChannels;
+
     int grayAt(int x, int y) {
+      if (x < 0 || y < 0 || x >= w || y >= h) return 255;
       final idx = (y * w + x) * channels;
-      return idx < bytes.length ? bytes[idx] : 255;
+      if (idx >= bytes.length) return 255;
+      final r = bytes[idx];
+      // Ảnh 1-2 kênh (xám) không có đủ RGB: dùng luôn kênh đầu.
+      if (channels < 3 || idx + 2 >= bytes.length) return r;
+      final g = bytes[idx + 1];
+      final b = bytes[idx + 2];
+      return (r * 299 + g * 587 + b * 114) ~/ 1000;
     }
 
-    // Ngưỡng tối theo độ sáng toàn ảnh (lấy mẫu theo bậc f cho gọn).
+    // Ngưỡng "tối" bám độ sáng toàn ảnh (điều kiện sáng thay đổi).
     var sum = 0;
     var count = 0;
     for (var y = 0; y < h; y += f) {
@@ -191,142 +228,238 @@ final class FrameAlignmentDetector {
         count++;
       }
     }
-    if (count == 0) return null;
+    if (count == 0) {
+      return const MarkerDetection(quad: null, candidates: []);
+    }
     final mean = sum / count;
-    final dark = (mean * 0.55).clamp(40.0, 160.0);
+    final dark = (mean * 0.55).clamp(40.0, 170.0);
+    if (debug) {
+      print('detect: mean=$mean dark=$dark f=$f dst=$dw×$dh '
+          'expectedSide=${(tpl.markerSide / tpl.pageWidthUnits * dw).toStringAsFixed(1)}');
+    }
 
-    // Profile: số pixel tối theo hàng / cột (đếm trên ảnh gốc cho mượt).
-    final rowDark = List<double>.filled(dh, 0);
-    final colDark = List<double>.filled(dw, 0);
-    for (var y = 0; y < h; y++) {
-      final ry = y ~/ f;
-      for (var x = 0; x < w; x++) {
-        if (grayAt(x, y) < dark) {
-          rowDark[ry] += 1;
-          colDark[x ~/ f] += 1;
-        }
+    // Mask tối ở ảnh thu nhỏ (lấy mẫu pixel góc trái-của-bậc).
+    final mask = List<bool>.filled(dw * dh, false);
+    for (var dy = 0; dy < dh; dy++) {
+      for (var dx = 0; dx < dw; dx++) {
+        mask[dy * dw + dx] = grayAt(dx * f, dy * f) < dark;
       }
     }
 
-    // 4 mép: hàng/cột "tối gần hết chiều dài" → chính là dải khung.
-    final topIdx = _firstEdge(rowDark, dw);
-    final leftIdx = _firstEdge(colDark, dh);
-    final rightIdx = _lastEdge(colDark, dh);
-    final bottomIdx = _lastEdge(rowDark, dw);
-    if (topIdx == null || leftIdx == null || rightIdx == null || bottomIdx == null) {
-      return null;
+    // Cỡ ô mốc hợp lệ theo template (px ảnh thu nhỏ; tỉ lệ so với TRANG giấy).
+    final expectedSide = tpl.markerSide / tpl.pageWidthUnits * dw;
+    final minSide = math.max(5.0, expectedSide * 0.4);
+    final maxSide = math.max(minSide * 2, expectedSide * 3.0);
+
+    final candidateList = _findSquareCandidates(
+      mask,
+      dw,
+      dh,
+      minSide,
+      maxSide,
+      debug: debug,
+    );
+
+    // Chọn 4 mốc góc: mỗi phần tư (theo tâm ứng viên) lấy ứng viên xa tâm nhất.
+    // Toạ độ candidates sinh sống ở ảnh thu nhỏ → nhân [f] về ảnh gốc.
+    final quad = _pickCornerQuad(candidateList, f);
+    if (debug) {
+      print('detect: candidates=${candidateList.length}');
+      for (final c in candidateList) {
+        print('  dst(${c.cx.toStringAsFixed(1)},${c.cy.toStringAsFixed(1)}) '
+            'bw=${c.bw} bh=${c.bh}');
+      }
+      print('detect: quad=$quad');
     }
+    return MarkerDetection(
+      quad: quad,
+      candidates: [
+        for (final c in candidateList) Offset(c.cx * f, c.cy * f),
+      ],
+    );
+  }
 
-    // Khung phải chiếm phần lớn ảnh (tránh "khung" của bàn/nền tối).
-    final fw = (rightIdx - leftIdx) * f;
-    final fh = (bottomIdx - topIdx) * f;
-    if (fw < w * 0.4 || fh < h * 0.4) return null;
+  /// Connected components (BFS 4 láng giềng) trên mask; lọc ô vuông đặc.
+  List<_SquareCandidate> _findSquareCandidates(
+    List<bool> mask,
+    int dw,
+    int dh,
+    double minSide,
+    double maxSide, {
+    bool debug = false,
+  }) {
+    final visited = List<bool>.filled(dw * dh, false);
+    final stack = <int>[];
+    final result = <_SquareCandidate>[];
 
-    // Tinh chỉnh 4 góc: mỗi góc = điểm tối "xuyên ra xa nhất" theo đúng đường
-    // chéo của mình (tl nhỏ nhất x+y, tr nhỏ nhất (W−1−x)+y, v.v.) TRONG SỐ
-    // điểm tối có cả dải ngang lẫn dải dọc chạm tới (lọc tạp điểm lẻ).
-    // Không dùng cửa sổ quanh seed vì mép nghiêng thật làm seed lệch xa hơn
-    // cửa sổ được phép — điểm chéo cực trị luôn tìm được góc đúng.
-    bool isDark(int x, int y) => x >= 0 && y >= 0 && x < w && y < h && grayAt(x, y) < dark;
+    for (var start = 0; start < mask.length; start++) {
+      if (!mask[start] || visited[start]) continue;
+      visited[start] = true;
+      stack.add(start);
+      var minX = start % dw, maxX = minX, minY = start ~/ dw, maxY = minY;
+      var area = 0;
+      while (stack.isNotEmpty) {
+        final i = stack.removeLast();
+        final iy = i ~/ dw;
+        final ix = i % dw;
+        area++;
+        if (ix < minX) minX = ix;
+        if (ix > maxX) maxX = ix;
+        if (iy < minY) minY = iy;
+        if (iy > maxY) maxY = iy;
+        // 4 láng giềng.
+        if (ix + 1 < dw) _visit(mask, visited, stack, i + 1);
+        if (ix > 0) _visit(mask, visited, stack, i - 1);
+        if (iy + 1 < dh) _visit(mask, visited, stack, i + dw);
+        if (iy > 0) _visit(mask, visited, stack, i - dw);
+      }
 
-    Offset? tl;
-    Offset? tr;
-    Offset? br;
-    Offset? bl;
-    double bestTl = double.infinity;
-    double bestTr = double.infinity;
-    double bestBr = double.infinity;
-    double bestBl = double.infinity;
-    final frameScale = w / SheetLayout.standardPage.width;
-    // Độ dày khung ước lượng trên ảnh này (FrameSpec.thickness theo trang chuẩn).
-    final tEst = const FrameSpec().thickness * frameScale;
-    // minRun nới lỏng 1px so với độ dày khung, kẹp trong [2..8].
-    final minRun = math.max(2, math.min(8, tEst.round() - 1));
-    // search bounds: quét quanh vùng khung, chừa mép ảnh chụp lố ra ngoài.
-    final window = math.max(24, f * 5);
-    final x1 = math.max(0, leftIdx * f - window);
-    final x2 = math.min(w - 1, rightIdx * f + window);
-    final y1 = math.max(0, topIdx * f - window);
-    final y2 = math.min(h - 1, bottomIdx * f + window);
-    for (var y = y1; y <= y2; y++) {
-      for (var x = x1; x <= x2; x++) {
-        if (!isDark(x, y)) continue;
-        final runH = math.max(
-          _darkRun(isDark, x, y, 1, 0, minRun),
-          _darkRun(isDark, x, y, -1, 0, minRun),
+      final bw = maxX - minX + 1;
+      final bh = maxY - minY + 1;
+      final fill = area / (bw * bh);
+      if (debug && area >= 6) {
+        print(
+          '  comp center=(${((minX + maxX) / 2).toStringAsFixed(1)},'
+          '${((minY + maxY) / 2).toStringAsFixed(1)}) bw=$bw bh=$bh '
+          'fill=${fill.toStringAsFixed(2)}',
         );
-        if (runH < minRun) continue;
-        final runV = math.max(
-          _darkRun(isDark, x, y, 0, 1, minRun),
-          _darkRun(isDark, x, y, 0, -1, minRun),
-        );
-        if (runV < minRun) continue;
-        // Điểm chéo: mỗi góc chọn điểm cực trị theo hướng tương ứng.
-        final sTl = (x + y).toDouble();
-        final sTr = (w - 1 - x + y).toDouble();
-        final sBr = (w - 1 - x + h - 1 - y).toDouble();
-        final sBl = (x + h - 1 - y).toDouble();
-        if (sTl < bestTl) {
-          bestTl = sTl;
-          tl = Offset(x.toDouble(), y.toDouble());
-        }
-        if (sTr < bestTr) {
-          bestTr = sTr;
-          tr = Offset(x.toDouble(), y.toDouble());
-        }
-        if (sBr < bestBr) {
-          bestBr = sBr;
-          br = Offset(x.toDouble(), y.toDouble());
-        }
-        if (sBl < bestBl) {
-          bestBl = sBl;
-          bl = Offset(x.toDouble(), y.toDouble());
-        }
+      }
+      if (bw < minSide || bh < minSide || bw > maxSide || bh > maxSide) continue;
+      // Gần vuông theo bbox (chấp nhận ô vuông xoay tới ±30°).
+      final aspect = bw / bh;
+      if (aspect < 0.7 || aspect > 1.4) continue;
+      // Blob đặc. Ngưỡng 0.5 vì bbox của ô vuông xoay θ có fill = 1/(sinθ+cosθ)²
+      // (θ=30° → ~0.54); ô tròn/đường viền bong bóng chỉ ~0.16, glyph ~0.2–0.45.
+      if (fill < 0.5) continue;
+      result.add(_SquareCandidate(
+        minX: minX,
+        minY: minY,
+        maxX: maxX,
+        maxY: maxY,
+      ));
+    }
+    return result;
+  }
+
+  static void _visit(
+    List<bool> mask,
+    List<bool> visited,
+    List<int> stack,
+    int i,
+  ) {
+    if (mask[i] && !visited[i]) {
+      visited[i] = true;
+      stack.add(i);
+    }
+  }
+
+  /// Phần tư ảnh → chọn mốc theo BẦU LỎI CONVEX HULL của ứng viên (đổi so
+  /// với bản đầu R1). Lý do: bong bóng đã tô cũng là blob đặc cạnh mốc; nếu
+  /// chọn theo "xa tâm của khối ứng viên" thì khối bong bóng kéo tâm lệch và
+  /// chọn nhầm mốc. Mốc góc luôn là đỉnh CỰC của hull — bong bóng nằm bên
+  /// trong, không thể vượt ra ngoài khung mốc → lấy đỉnh cực theo 4 hướng
+  /// chéo của hull là đủ, độc lập với phân bố bong bóng.
+  AlignmentQuad? _pickCornerQuad(
+    List<_SquareCandidate> candidates,
+    int f,
+  ) {
+    if (candidates.length < 4) return null;
+    final hull = _convexHull([
+      for (final c in candidates) Offset(c.cx * f, c.cy * f),
+    ]);
+    if (hull.length < 4) return null;
+
+    Offset? tl, tr, br, bl;
+    double bestTl = -double.infinity,
+        bestTr = -double.infinity,
+        bestBr = -double.infinity,
+        bestBl = -double.infinity;
+    for (final p in hull) {
+      final tlScore = -p.dx - p.dy;
+      final trScore = p.dx - p.dy;
+      final brScore = p.dx + p.dy;
+      final blScore = -p.dx + p.dy;
+      if (tlScore > bestTl) {
+        bestTl = tlScore;
+        tl = p;
+      }
+      if (trScore > bestTr) {
+        bestTr = trScore;
+        tr = p;
+      }
+      if (brScore > bestBr) {
+        bestBr = brScore;
+        br = p;
+      }
+      if (blScore > bestBl) {
+        bestBl = blScore;
+        bl = p;
       }
     }
-    if (tl == null || tr == null || br == null || bl == null) return null;
+    final quadPoints = {tl, tr, br, bl};
+    if (quadPoints.contains(null) || quadPoints.length < 4) {
+      return null; // Hull quá dẹt: một đỉnh bị chọn cho 2 hướng → thiếu đỉnh.
+    }
+    // Tỉ lệ cạnh quad hợp lý (phiếu dựng đứng hoặc xoay đều chấp nhận).
+    final top = (tr!.dx - tl!.dx).abs();
+    final bottom = (br!.dx - bl!.dx).abs();
+    final left = (bl.dy - tl.dy).abs();
+    final right = (br.dy - tr.dy).abs();
+    final meanW = (top + bottom) / 2;
+    final meanH = (left + right) / 2;
+    if (meanW <= 0 || meanH <= 0) return null;
+    final ratio = meanH / meanW;
+    // frameH/frameW = 1.47; xoay ±30° ratio dao động ~[0.9, 2.4].
+    if (ratio < 0.8 || ratio > 2.4) return null;
     return AlignmentQuad(tl, tr, br, bl);
   }
 
-  /// Index profile đầu tiên đạt ngưỡng [minFrameRunRatio].
-  ///
-  /// Không đòi hàng kề cũng "tối": dải khung mảnh (≈5px) có thể gọn hơn bậc
-  /// thu nhỏ f, nên hai hàng kề hợp lệ lại là nền trắng.
-  int? _firstEdge(List<double> profile, int span) {
-    final threshold = span * minFrameRunRatio;
-    for (var i = 0; i < profile.length; i++) {
-      if (profile[i] >= threshold) return i;
+  /// Convex hull (Andrew monotone chain), trả đỉnh theo thứ tự CCW bỏ trùng.
+  static List<Offset> _convexHull(List<Offset> pts) {
+    final sorted = [...pts]..sort((a, b) {
+        final dx = a.dx.compareTo(b.dx);
+        return dx != 0 ? dx : a.dy.compareTo(b.dy);
+      });
+    final lower = <Offset>[];
+    for (final p in sorted) {
+      while (lower.length >= 2 &&
+          _cross(lower[lower.length - 2], lower.last, p) <= 0) {
+        lower.removeLast();
+      }
+      lower.add(p);
     }
-    return null;
+    final upper = <Offset>[];
+    for (final p in sorted.reversed) {
+      while (upper.length >= 2 &&
+          _cross(upper[upper.length - 2], upper.last, p) <= 0) {
+        upper.removeLast();
+      }
+      upper.add(p);
+    }
+    lower.removeLast();
+    upper.removeLast();
+    return [...lower, ...upper];
   }
 
-  /// Tương tự [_firstEdge] nhưng theo chiều ngược (mép dưới / mép phải).
-  int? _lastEdge(List<double> profile, int span) {
-    final threshold = span * minFrameRunRatio;
-    for (var i = profile.length - 1; i >= 0; i--) {
-      if (profile[i] >= threshold) return i;
-    }
-    return null;
-  }
+  static double _cross(Offset o, Offset a, Offset b) =>
+      (a.dx - o.dx) * (b.dy - o.dy) - (a.dy - o.dy) * (b.dx - o.dx);
 }
 
-/// Nắn thẳng: warp ảnh gốc theo [quad] (4 góc khung phiếu) thành trang chuẩn
-/// [outputSize] (PNG màu).
+/// Nắn thẳng: warp ảnh gốc theo [quad] (4 TÂM MỐC góc) về [targetQuad]
+/// (4 tâm mốc trên TRANG CHUẨN, theo [outputSize]) → PNG xám.
 ///
-/// QUAN TRỌNG: [quad] là 4 góc NGOÀI khung (khung nằm cách mép giấy
-/// `FrameSpec.insetRatio`). Kết quả warp đưa 4 góc đó về đúng hộp
-/// `FrameSpec.outerRect(outputSize)` — chứ KHÔNG phải toàn trang — nhờ vậy
-/// toạ độ nội dung phiếu sau khi nắn vẫn khớp tuyệt đối với [SheetLayout].
-///
-/// Với từng điểm ảnh đích ta giải toạ độ nền (u,v) trong ảnh gốc qua
-/// homography (hộp khung trang chuẩn → khung trên ảnh), rồi nội suy song
-/// tuyến. Điểm ngoài biên ảnh gốc được kẹp vào mép (nền trắng).
+/// [quad] là 4 tâm ô vuông mốc góc ở ảnh gốc — kết quả warp đưa chúng về đúng
+/// các tâm mốc tương ứng trên trang chuẩn, nhờ vậy toạ độ nội dung phiếu sau
+/// khi nắn khớp tuyệt đối với [SheetLayout] (cùng hệ trang + lề). Xoay/chếch/
+/// khoảng cách đều được homography xử lý; điểm ngoài biên ảnh gốc được kẹp
+/// vào mép.
 final class PerspectiveWarper {
   const PerspectiveWarper();
 
   Uint8List warpRectify(
     Uint8List imageBytes, {
     required AlignmentQuad quad,
+    required AlignmentQuad targetQuad,
     required Size outputSize,
   }) {
     final decoded = img.decodeImage(imageBytes);
@@ -342,22 +475,11 @@ final class PerspectiveWarper {
     final oh = outputSize.height.toInt();
     final out = img.Image(width: ow, height: oh);
 
-    // Đích: hộp khung trên trang chuẩn (KHÔNG phải toàn trang).
-    final outer = const FrameSpec().outerRect(outputSize);
-    final dstCorners = [
-      Offset(outer.left, outer.top),
-      Offset(outer.right, outer.top),
-      Offset(outer.right, outer.bottom),
-      Offset(outer.left, outer.bottom),
-    ];
-    final homo = solveHomography(dstCorners, quad.corners);
+    final homo = solveHomography(targetQuad.corners, quad.corners);
 
     for (var y = 0; y < oh; y++) {
       for (var x = 0; x < ow; x++) {
         final src = applyHomography(homo, x.toDouble(), y.toDouble());
-        // Điểm ngoài biên ảnh gốc được kẹp vào mép (nền ngoài ảnh gốc trắng
-        // sẽ được dần đổi thành màu mép ảnh) — chấp nhận được vì ảnh chụp
-        // luôn lớn hơn khung phiếu.
         final g = _sampleGray(bytes, channels, w, h, src.dx, src.dy);
         out.setPixelRgb(x, y, g, g, g);
       }
@@ -386,7 +508,8 @@ int _sampleGray(
 
   int at(int px, int py) {
     final idx = (py * w + px) * channels;
-    return idx < bytes.length ? bytes[idx] : 255;
+    if (idx >= bytes.length) return 255;
+    return bytes[idx];
   }
 
   final g00 = at(x0, y0);

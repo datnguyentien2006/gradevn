@@ -73,7 +73,7 @@ void main() {
     times.sort();
     final median = times[times.length ~/ 2];
     stdout.writeln(
-      'Benchmark OMR (1240×1754, 40 câu): '
+      'Benchmark OMR (1576×2205, 40 câu): '
       '${times.join(' / ')} ms — trung vị $median ms',
     );
     expect(median, lessThan(2000),

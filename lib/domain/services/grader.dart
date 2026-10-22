@@ -23,7 +23,6 @@ final class GradingResult {
   int get correctCount => correctFlags.where((f) => f == true).length;
   int get incorrectCount => correctFlags.where((f) => f == false).length;
   int get unansweredCount => correctFlags.where((f) => f == null).length;
-  int get totalQuestions => correctFlags.length;
 }
 
 /// Chấm điểm phiếu trả lời theo đáp án (key) — logic thuần, đã kiểm thử đầy đủ.

@@ -7,11 +7,12 @@ import '../../domain/services/sheet_layout.dart';
 import 'omr_image_pipeline.dart';
 import 'sheet_alignment.dart';
 
-/// Kích thước trang chuẩn của hệ thống OMR (A4 @150dpi).
+/// Kích thước trang chuẩn của hệ thống OMR = toàn trang giấy (khung mốc + lề)
+/// × 0.5 so với ảnh scan tham chiếu (giữ đồng bộ [SheetLayout.standardPage]).
 ///
 /// Mọi phiếu chụp thật đều được nắn phẳng về đúng kích thước này trước khi
 /// đo mật độ, nhờ vậy toạ độ [SheetLayout] luôn khớp.
-const Size omrPageSize = SheetLayout.standardPage;
+final Size omrPageSize = SheetLayout.standardPage;
 
 /// Kết quả quét một phiếu (chưa chấm điểm, chưa lưu DB).
 final class SheetScan {
@@ -31,7 +32,7 @@ final class SheetScan {
   /// Chuỗi 6 chữ số đọc từ lưới số báo danh ('?' cho vị trí không đọc được).
   final String studentCodeRaw;
 
-  /// Chuỗi 6 chữ số đọc từ lưới mã đề.
+  /// Chuỗi 3 chữ số đọc từ lưới mã đề ('?' cho vị trí không đọc được).
   final String examCodeRaw;
 
   final List<DensityBlock> answerBlocks;
@@ -72,27 +73,40 @@ final class OmrScanService {
   const OmrScanService({
     this.pipeline = const DartOmrImagePipeline(),
     this.decoder = const OmrDecoder(),
-    this.detector = const FrameAlignmentDetector(),
+    this.detector = const SheetMarkerDetector(),
     this.warper = const PerspectiveWarper(),
   });
 
   final OmrImagePipeline pipeline;
   final OmrDecoder decoder;
-  final FrameAlignmentDetector detector;
+  final SheetMarkerDetector detector;
   final PerspectiveWarper warper;
 
-  /// Quét ảnh CHỤP THẬT (có thể chếch/nghiêng): phát hiện khung → nắn phẳng
-  /// về trang chuẩn → đo + giải mã. Trả về null nếu không tìm thấy khung.
+  /// Quét ảnh CHỤP THẬT (xoay/chếch/không tràn khung): phát hiện 4 ô vuông
+  /// mốc → nắn phẳng về trang chuẩn → đo + giải mã. Trả về null nếu không tìm
+  /// đủ 4 mốc tin cậy (UI rơi về CropReviewScreen cho người dùng ghim tay).
   PhotoScan? scanPhoto(
     Uint8List imageBytes, {
     required SheetSpec spec,
     OmrTuning tuning = const OmrTuning(),
   }) {
     final stopwatch = Stopwatch()..start();
-    final quad = detector.detect(imageBytes);
+    final detection = detector.detect(imageBytes);
+    final quad = detection.quad;
     if (quad == null) return null;
     final layout = SheetLayout.forSpec(spec, page: omrPageSize);
-    final warped = warper.warpRectify(imageBytes, quad: quad, outputSize: layout.page);
+    final targetQuad = AlignmentQuad(
+      layout.cornerMarkerCenters[0],
+      layout.cornerMarkerCenters[1],
+      layout.cornerMarkerCenters[2],
+      layout.cornerMarkerCenters[3],
+    );
+    final warped = warper.warpRectify(
+      imageBytes,
+      quad: quad,
+      targetQuad: targetQuad,
+      outputSize: layout.page,
+    );
     final scanResult = scan(warped, layout: layout, spec: spec, tuning: tuning);
     stopwatch.stop();
     return PhotoScan(scan: scanResult, quad: quad, warpedBytes: warped);
@@ -108,7 +122,7 @@ final class OmrScanService {
     final densities = pipeline.measure(imageBytes, layout: layout, tuning: tuning);
     final answers = decoder.decodeAnswers(
       blocks: densities.answerBlocks,
-      spec: spec ?? layout.spec,
+      spec: spec ?? layout.specOrDefault,
       totalQuestions: layout.totalQuestions,
       rowsPerAnswerBlock: layout.rowsPerAnswerBlock,
     );
