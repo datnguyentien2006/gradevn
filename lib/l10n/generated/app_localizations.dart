@@ -219,6 +219,288 @@ abstract class AppLocalizations {
   /// In vi, this message translates to:
   /// **'Quay lại'**
   String get back;
+
+  /// No description provided for @scanLoadingData.
+  ///
+  /// In vi, this message translates to:
+  /// **'Đang tải dữ liệu kỳ thi…'**
+  String get scanLoadingData;
+
+  /// No description provided for @scanContestMissing.
+  ///
+  /// In vi, this message translates to:
+  /// **'Không tìm thấy kỳ thi.'**
+  String get scanContestMissing;
+
+  /// No description provided for @scanCameraUnavailable.
+  ///
+  /// In vi, this message translates to:
+  /// **'Camera không khả dụng trên thiết bị này.'**
+  String get scanCameraUnavailable;
+
+  /// No description provided for @scanPickSheetImage.
+  ///
+  /// In vi, this message translates to:
+  /// **'Chọn ảnh phiếu từ tệp…'**
+  String get scanPickSheetImage;
+
+  /// No description provided for @scanGuidance.
+  ///
+  /// In vi, this message translates to:
+  /// **'Đặt trọn khung phiếu trong hình chữ nhật, trên nền sáng'**
+  String get scanGuidance;
+
+  /// No description provided for @scanCapture.
+  ///
+  /// In vi, this message translates to:
+  /// **'Chụp phiếu'**
+  String get scanCapture;
+
+  /// No description provided for @scanProcessing.
+  ///
+  /// In vi, this message translates to:
+  /// **'Đang chấm phiếu…'**
+  String get scanProcessing;
+
+  /// No description provided for @scanFrameNotFound.
+  ///
+  /// In vi, this message translates to:
+  /// **'Không đọc được khung phiếu trên ảnh.'**
+  String get scanFrameNotFound;
+
+  /// No description provided for @scanFrameNotFoundHint.
+  ///
+  /// In vi, this message translates to:
+  /// **'Chụp lại cho trọn khung phiếu, hoặc cắt lại vùng ảnh rồi thử tiếp.'**
+  String get scanFrameNotFoundHint;
+
+  /// No description provided for @scanRetake.
+  ///
+  /// In vi, this message translates to:
+  /// **'Chụp lại'**
+  String get scanRetake;
+
+  /// No description provided for @scanTryCrop.
+  ///
+  /// In vi, this message translates to:
+  /// **'Kiểm tra / cắt ảnh'**
+  String get scanTryCrop;
+
+  /// No description provided for @cropTitle.
+  ///
+  /// In vi, this message translates to:
+  /// **'Cắt vùng phiếu'**
+  String get cropTitle;
+
+  /// No description provided for @cropApply.
+  ///
+  /// In vi, this message translates to:
+  /// **'Kiểm tra'**
+  String get cropApply;
+
+  /// No description provided for @cropRetake.
+  ///
+  /// In vi, this message translates to:
+  /// **'Chụp lại'**
+  String get cropRetake;
+
+  /// No description provided for @resultTitle.
+  ///
+  /// In vi, this message translates to:
+  /// **'Kết quả phiếu'**
+  String get resultTitle;
+
+  /// No description provided for @resultScore.
+  ///
+  /// In vi, this message translates to:
+  /// **'Điểm: {score}/{max}'**
+  String resultScore(String score, String max);
+
+  /// No description provided for @resultStats.
+  ///
+  /// In vi, this message translates to:
+  /// **'{correct} câu đúng • {incorrect} sai • {blank} bỏ trống'**
+  String resultStats(int correct, int incorrect, int blank);
+
+  /// No description provided for @resultStudentCodeLabel.
+  ///
+  /// In vi, this message translates to:
+  /// **'Số báo danh'**
+  String get resultStudentCodeLabel;
+
+  /// No description provided for @resultExamCodeLabel.
+  ///
+  /// In vi, this message translates to:
+  /// **'Mã đề'**
+  String get resultExamCodeLabel;
+
+  /// No description provided for @resultStudentLabel.
+  ///
+  /// In vi, this message translates to:
+  /// **'Học sinh'**
+  String get resultStudentLabel;
+
+  /// No description provided for @resultStudentNotFound.
+  ///
+  /// In vi, this message translates to:
+  /// **'Không tìm thấy số báo danh'**
+  String get resultStudentNotFound;
+
+  /// No description provided for @resultBestGuessNote.
+  ///
+  /// In vi, this message translates to:
+  /// **'Không đọc được mã đề — dùng mã đề có điểm khớp cao nhất để chấm.'**
+  String get resultBestGuessNote;
+
+  /// No description provided for @resultSave.
+  ///
+  /// In vi, this message translates to:
+  /// **'Lưu kết quả'**
+  String get resultSave;
+
+  /// No description provided for @resultScanAnother.
+  ///
+  /// In vi, this message translates to:
+  /// **'Chụp phiếu khác'**
+  String get resultScanAnother;
+
+  /// No description provided for @partScoreLine.
+  ///
+  /// In vi, this message translates to:
+  /// **'Phần {part}: {score} điểm'**
+  String partScoreLine(String part, String score);
+
+  /// No description provided for @sheetSavedMessage.
+  ///
+  /// In vi, this message translates to:
+  /// **'Đã lưu: {code} — {score} điểm'**
+  String sheetSavedMessage(String code, String score);
+
+  /// No description provided for @scanImagePickFailed.
+  ///
+  /// In vi, this message translates to:
+  /// **'Không chọn được ảnh.'**
+  String get scanImagePickFailed;
+
+  /// No description provided for @scanError.
+  ///
+  /// In vi, this message translates to:
+  /// **'Đã xảy ra lỗi: {error}'**
+  String scanError(String error);
+
+  /// No description provided for @sheetListTitle.
+  ///
+  /// In vi, this message translates to:
+  /// **'Phiếu đã chấm'**
+  String get sheetListTitle;
+
+  /// No description provided for @sheetTileNoCode.
+  ///
+  /// In vi, this message translates to:
+  /// **'Không có số báo danh'**
+  String get sheetTileNoCode;
+
+  /// No description provided for @sheetTileScore.
+  ///
+  /// In vi, this message translates to:
+  /// **'{score} điểm'**
+  String sheetTileScore(String score);
+
+  /// No description provided for @sheetListEmpty.
+  ///
+  /// In vi, this message translates to:
+  /// **'Chưa có phiếu nào được chấm cho kỳ thi này.'**
+  String get sheetListEmpty;
+
+  /// No description provided for @deleteSheetConfirmTitle.
+  ///
+  /// In vi, this message translates to:
+  /// **'Xoá kết quả này?'**
+  String get deleteSheetConfirmTitle;
+
+  /// No description provided for @sheetDetailTitle.
+  ///
+  /// In vi, this message translates to:
+  /// **'Phiếu {code}'**
+  String sheetDetailTitle(String code);
+
+  /// No description provided for @detailPartScoresTitle.
+  ///
+  /// In vi, this message translates to:
+  /// **'Điểm theo phần'**
+  String get detailPartScoresTitle;
+
+  /// No description provided for @answerLinesTitle.
+  ///
+  /// In vi, this message translates to:
+  /// **'Từng câu trả lời'**
+  String get answerLinesTitle;
+
+  /// No description provided for @answerLine.
+  ///
+  /// In vi, this message translates to:
+  /// **'Câu {index} — chọn {answer} — {status}'**
+  String answerLine(int index, String answer, String status);
+
+  /// No description provided for @answerCorrect.
+  ///
+  /// In vi, this message translates to:
+  /// **'Đúng'**
+  String get answerCorrect;
+
+  /// No description provided for @answerIncorrect.
+  ///
+  /// In vi, this message translates to:
+  /// **'Sai'**
+  String get answerIncorrect;
+
+  /// No description provided for @answerBlank.
+  ///
+  /// In vi, this message translates to:
+  /// **'Bỏ trống'**
+  String get answerBlank;
+
+  /// No description provided for @detailNoImage.
+  ///
+  /// In vi, this message translates to:
+  /// **'Không có ảnh phiếu.'**
+  String get detailNoImage;
+
+  /// No description provided for @sheetDeletedMessage.
+  ///
+  /// In vi, this message translates to:
+  /// **'Đã xoá kết quả phiếu.'**
+  String get sheetDeletedMessage;
+
+  /// No description provided for @resultsContestCount.
+  ///
+  /// In vi, this message translates to:
+  /// **'{count} phiếu'**
+  String resultsContestCount(int count);
+
+  /// No description provided for @contestDetailScanButton.
+  ///
+  /// In vi, this message translates to:
+  /// **'Chấm phiếu bằng camera'**
+  String get contestDetailScanButton;
+
+  /// No description provided for @printBlankSheet.
+  ///
+  /// In vi, this message translates to:
+  /// **'In phiếu mẫu'**
+  String get printBlankSheet;
+
+  /// No description provided for @blankSheetSavedMessage.
+  ///
+  /// In vi, this message translates to:
+  /// **'Đã lưu phiếu mẫu: {path}'**
+  String blankSheetSavedMessage(String path);
+
+  /// No description provided for @blankSheetFailed.
+  ///
+  /// In vi, this message translates to:
+  /// **'Không tạo được phiếu mẫu.'**
+  String get blankSheetFailed;
 }
 
 class _AppLocalizationsDelegate

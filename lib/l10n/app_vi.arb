@@ -20,5 +20,114 @@
   "edit": "Sửa",
   "delete": "Xóa",
   "save": "Lưu",
-  "back": "Quay lại"
+  "back": "Quay lại",
+
+  "scanLoadingData": "Đang tải dữ liệu kỳ thi…",
+  "scanContestMissing": "Không tìm thấy kỳ thi.",
+  "scanCameraUnavailable": "Camera không khả dụng trên thiết bị này.",
+  "scanPickSheetImage": "Chọn ảnh phiếu từ tệp…",
+  "scanGuidance": "Đặt trọn khung phiếu trong hình chữ nhật, trên nền sáng",
+  "scanCapture": "Chụp phiếu",
+  "scanProcessing": "Đang chấm phiếu…",
+  "scanFrameNotFound": "Không đọc được khung phiếu trên ảnh.",
+  "scanFrameNotFoundHint": "Chụp lại cho trọn khung phiếu, hoặc cắt lại vùng ảnh rồi thử tiếp.",
+  "scanRetake": "Chụp lại",
+  "scanTryCrop": "Kiểm tra / cắt ảnh",
+  "cropTitle": "Cắt vùng phiếu",
+  "cropApply": "Kiểm tra",
+  "cropRetake": "Chụp lại",
+  "resultTitle": "Kết quả phiếu",
+  "resultScore": "Điểm: {score}/{max}",
+  "@resultScore": {
+    "placeholders": {
+      "score": { "type": "String" },
+      "max": { "type": "String" }
+    }
+  },
+  "resultStats": "{correct} câu đúng • {incorrect} sai • {blank} bỏ trống",
+  "@resultStats": {
+    "placeholders": {
+      "correct": { "type": "int" },
+      "incorrect": { "type": "int" },
+      "blank": { "type": "int" }
+    }
+  },
+  "resultStudentCodeLabel": "Số báo danh",
+  "resultExamCodeLabel": "Mã đề",
+  "resultStudentLabel": "Học sinh",
+  "resultStudentNotFound": "Không tìm thấy số báo danh",
+  "resultBestGuessNote": "Không đọc được mã đề — dùng mã đề có điểm khớp cao nhất để chấm.",
+  "resultSave": "Lưu kết quả",
+  "resultScanAnother": "Chụp phiếu khác",
+  "partScoreLine": "Phần {part}: {score} điểm",
+  "@partScoreLine": {
+    "placeholders": {
+      "part": { "type": "String" },
+      "score": { "type": "String" }
+    }
+  },
+  "sheetSavedMessage": "Đã lưu: {code} — {score} điểm",
+  "@sheetSavedMessage": {
+    "placeholders": {
+      "code": { "type": "String" },
+      "score": { "type": "String" }
+    }
+  },
+  "scanImagePickFailed": "Không chọn được ảnh.",
+  "scanError": "Đã xảy ra lỗi: {error}",
+  "@scanError": {
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+
+  "sheetListTitle": "Phiếu đã chấm",
+  "sheetTileNoCode": "Không có số báo danh",
+  "sheetTileScore": "{score} điểm",
+  "@sheetTileScore": {
+    "placeholders": {
+      "score": { "type": "String" }
+    }
+  },
+  "sheetListEmpty": "Chưa có phiếu nào được chấm cho kỳ thi này.",
+  "deleteSheetConfirmTitle": "Xoá kết quả này?",
+
+  "sheetDetailTitle": "Phiếu {code}",
+  "@sheetDetailTitle": {
+    "placeholders": {
+      "code": { "type": "String" }
+    }
+  },
+  "detailPartScoresTitle": "Điểm theo phần",
+  "answerLinesTitle": "Từng câu trả lời",
+  "answerLine": "Câu {index} — chọn {answer} — {status}",
+  "@answerLine": {
+    "placeholders": {
+      "index": { "type": "int" },
+      "answer": { "type": "String" },
+      "status": { "type": "String" }
+    }
+  },
+  "answerCorrect": "Đúng",
+  "answerIncorrect": "Sai",
+  "answerBlank": "Bỏ trống",
+  "detailNoImage": "Không có ảnh phiếu.",
+  "sheetDeletedMessage": "Đã xoá kết quả phiếu.",
+
+  "resultsContestCount": "{count} phiếu",
+  "@resultsContestCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+
+  "contestDetailScanButton": "Chấm phiếu bằng camera",
+  "printBlankSheet": "In phiếu mẫu",
+  "blankSheetSavedMessage": "Đã lưu phiếu mẫu: {path}",
+  "@blankSheetSavedMessage": {
+    "placeholders": {
+      "path": { "type": "String" }
+    }
+  },
+  "blankSheetFailed": "Không tạo được phiếu mẫu."
 }

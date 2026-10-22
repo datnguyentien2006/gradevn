@@ -4,6 +4,9 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<!-- M3: camera chấm phiếu (plugin camera bắt buộc khai báo lý do). -->
+	<key>NSCameraUsageDescription</key>
+	<string>GradeVN cần camera để chấm phiếu trả lời.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

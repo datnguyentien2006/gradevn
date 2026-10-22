@@ -4,6 +4,7 @@ import 'package:gradevn/l10n/generated/app_localizations.dart';
 
 import 'classes_tab.dart';
 import 'contests_tab.dart';
+import 'results_tab.dart';
 import 'placeholder_screen.dart';
 
 /// Màn hình chính — NavigationBar 4 tab: Lớp học / Kỳ thi / Kết quả / Thống kê.
@@ -41,7 +42,7 @@ final class _HomeScreenState extends ConsumerState<HomeScreen> {
         children: const <Widget>[
           ClassesTab(),
           ContestsTab(),
-          _TabPlaceholder(icon: Icons.fact_check_outlined),
+          ResultsTab(),
           _TabPlaceholder(icon: Icons.bar_chart_outlined),
         ],
       ),

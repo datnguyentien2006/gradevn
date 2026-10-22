@@ -173,6 +173,13 @@ final class DriftGradedSheetRepository implements GradedSheetRepository {
           .map((rows) => rows.map((r) => r.toEntity()).toList());
 
   @override
+  Future<GradedSheet?> byId(int id) async {
+    final row = await (_db.select(_db.gradedSheets)..where((t) => t.id.equals(id)))
+        .getSingleOrNull();
+    return row?.toEntity();
+  }
+
+  @override
   Future<int> insert(GradedSheet sheet) =>
       _db.into(_db.gradedSheets).insert(sheet.toCompanion());
 

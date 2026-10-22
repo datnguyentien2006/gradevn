@@ -14,6 +14,7 @@ final class GradedSheet {
     required this.chosen,
     required this.correctFlags,
     required this.score,
+    this.id,
     this.keyId,
     this.studentId,
     this.partScores = const <String, double>{},
@@ -22,6 +23,10 @@ final class GradedSheet {
     this.infoImagePath,
     this.gradedAt,
   });
+
+  /// Id của hàng DB (tự sinh khi insert; null với phiếu chưa lưu).
+  /// Màn xem lại/chi tiết phiếu cần id để đọc + xoá theo hàng.
+  final int? id;
 
   /// Kỳ thi phiếu thuộc về.
   final int contestId;

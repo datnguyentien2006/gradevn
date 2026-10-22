@@ -39,6 +39,9 @@ abstract interface class StudentRepository {
 
 abstract interface class GradedSheetRepository {
   Stream<List<GradedSheet>> watchByContest(int contestId);
+
+  /// Lấy một phiếu đã chấm theo id hàng DB (chi tiết phiếu M3).
+  Future<GradedSheet?> byId(int id);
   Future<int> insert(GradedSheet sheet);
   Future<void> delete(int id);
 }

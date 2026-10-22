@@ -111,6 +111,7 @@ extension GradedSheetRowX on GradedSheetRow {
       flags.add(c == '1' ? true : c == '0' ? false : null);
     }
     return entities.GradedSheet(
+      id: id,
       contestId: contestId,
       keyId: keyId,
       studentId: studentId,

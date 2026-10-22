@@ -5,9 +5,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gradevn/domain/entities/contest.dart';
 import 'package:gradevn/data/import_export/xlsx_service.dart';
+import 'package:gradevn/l10n/generated/app_localizations.dart';
+import 'package:pdf/pdf.dart' as pdf_format;
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../state/providers.dart';
+import 'scan_screen.dart';
+import '../../data/cv/sheet_painter.dart' show renderBlankSheet;
+import '../../domain/services/sheet_layout.dart';
 
 /// Màn chi tiết kỳ thi: cấu hình phiếu + quản lý mã đề (key) + xuất kết quả.
 final class ContestDetailScreen extends ConsumerWidget {
@@ -73,8 +80,16 @@ final class ContestDetailScreen extends ConsumerWidget {
           const SizedBox(height: 12),
           FilledButton.icon(
             icon: const Icon(Icons.document_scanner_outlined),
-            label: const Text('Chấm phiếu bằng camera'),
-            onPressed: () => Navigator.of(context).pushNamed('/contest/${contest.id}/scan'),
+            label: Text(AppLocalizations.of(context)!.contestDetailScanButton),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => ScanScreen(contestId: contest.id),
+            )),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.print_outlined),
+            label: Text(AppLocalizations.of(context)!.printBlankSheet),
+            onPressed: () => _printBlankSheet(context),
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
@@ -163,6 +178,45 @@ final class ContestDetailScreen extends ConsumerWidget {
       [for (final k in keys) (k.examCode, k.answerSequence)],
     );
     messenger.showSnackBar(SnackBar(content: Text('Đã nhập ${keys.length} mã đề.')));
+  }
+
+  /// M3: in phiếu mẫu (phiếu trống) của kỳ thi — dựng PDF A4 dọc từ
+  /// renderBlankSheet rồi chia sẻ qua Printing; luôn thất bại (desktop không
+  /// có plugin) → fallback ghi file vào thư mục tài liệu và báo đường dẫn.
+  Future<void> _printBlankSheet(BuildContext context) async {
+    final l10n = AppLocalizations.of(context)!;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final layout =
+          SheetLayout.forSpec(contest.sheetSpec, page: SheetLayout.standardPage);
+      final png = renderBlankSheet(layout);
+      final doc = pw.Document();
+      doc.addPage(pw.Page(
+        pageFormat: pdf_format.PdfPageFormat.a4,
+        build: (context) => pw.Image(
+          pw.MemoryImage(png),
+          fit: pw.BoxFit.fill,
+        ),
+      ));
+      final bytes = await doc.save();
+      final safeName = contest.name.replaceAll(_invalidNameChars, '_');
+      final ok = await Printing.sharePdf(
+        bytes: bytes,
+        filename: 'phieu_$safeName.pdf',
+      );
+      if (ok == false) {
+        final docsDir = await getApplicationDocumentsDirectory();
+        final fallbackPath =
+            '${docsDir.path}${Platform.pathSeparator}phieu_$safeName.pdf';
+        File(fallbackPath).writeAsBytesSync(bytes);
+        messenger.showSnackBar(
+            SnackBar(content: Text(l10n.blankSheetSavedMessage(fallbackPath))));
+      }
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+        content: Text(l10n.scanError(l10n.blankSheetFailed)),
+      ));
+    }
   }
 
   Future<void> _exportResults(BuildContext context, WidgetRef ref) async {
