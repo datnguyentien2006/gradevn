@@ -1,0 +1,45 @@
+name: gradevn
+description: "GradeVN — Ứng dụng chấm điểm phiếu trắc nghiệm bằng camera (offline, tiếng Việt)."
+publish_to: 'none'
+
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # State management: Riverpod (quyết định & lý do: docs/implementation-plan.md §3)
+  flutter_riverpod: ^3.0.3
+
+  # DB: drift (SQLite offline-first; docs §4)
+  drift: ^2.29.0
+  path_provider: ^2.1.5
+  path: ^1.9.1
+
+  # Xuất Excel / PDF (M1/M4): syncfusion_flutter_xlsio, pdf, printing
+  syncfusion_flutter_xlsio: 35.1.41
+  pdf: ^3.11.3
+  printing: ^5.14.4
+
+  # Xử lý ảnh OMR (M2): pure-Dart pipeline (docs §4/§9)
+  image: ^4.5.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  # Sinh mã drift (+ riverpod_generator nếu dùng annotation)
+  build_runner: ^2.7.4
+  drift_dev: ^2.29.0
+  # Giả lập dependency cho unit test
+  mocktail: ^1.0.4
+
+flutter:
+  uses-material-design: true
+  generate: true
