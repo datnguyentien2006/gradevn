@@ -1,7 +1,9 @@
-// Màn chấm phiếu bằng camera (R1): preview TỰ DO (không còn ô ngắm chữ nhật),
-// overlay đồng thời "Đã đủ 4 mốc" khi bộ phát hiện thấy đủ 4 ô vuông trong
-// luồng preview; nút chụp LUÔN bật; chấm trong isolate; thiếu mốc → màn ghim
-// 4 ô vuông đen (CropReviewScreen) rồi chạy lại pipeline trên ảnh đã nắn.
+// Màn chấm phiếu bằng camera (R1→R3): preview TỰ DO; 4 ô vuông overlay là
+// PHÉP CHIẾU của 4 ô vuông đen góc phiếu theo khung phiếu ảo (aspect-fit
+// trang chuẩn) — không phải trang trí ở góc màn; chúng được đặt đúng chỗ
+// mốc CẦN nằm, kéo/snap được (R2) và tô viền xanh khi khoá lên mốc thật.
+// Nút chụp LUÔN bật; chấm trong isolate; thiếu mốc → màn ghim 4 ô vuông
+// đen (CropReviewScreen) rồi chạy lại pipeline trên ảnh đã nắn.
 //
 // Quy ước an toàn:
 // - Camera chỉ khởi tạo trên Android/iOS (Platform check) và MỌI lệnh camera
@@ -24,7 +26,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../../data/cv/preview_overlay.dart'
-    show CoverMapping, onConfidentMarkerCount, snapSquareCenters;
+    show CoverMapping, SheetProjection, snapSquareCenters, squareLockStates;
 import '../../data/cv/scan_flow.dart'
     show GradedScan, UngradedReason, processPhoto;
 import '../../data/cv/sheet_alignment.dart';
@@ -77,8 +79,41 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   /// khung ↔ màn hình và tính khoảng cách snap.
   Size _previewArea = Size.zero;
 
-  /// R2: cỡ ô vuông trên màn hình (px lợi).
-  static const double _squareSize = 76;
+  /// R3: phép chiếu phiếu ảo hiện hành (null khi chưa đo được preview/contest).
+  ///
+  /// Khung ảo = hình chữ nhật aspect-fit của TRANG GIẤY nguyên vẹn (kể cả
+  /// lề, giữ tỉ lệ template) giữa vùng preview; 4 ô overlay mặc định nằm
+  /// tại vị trí chiếu của 4 tâm mốc góc và cỡ ô theo cạnh mốc in thật.
+  SheetProjection? _projection() {
+    final contest = _contest;
+    final area = _previewArea;
+    if (contest == null ||
+        area == Size.zero ||
+        area.width <= 0 ||
+        area.height <= 0) {
+      return null;
+    }
+    final layout =
+        SheetLayout.forSpec(contest.sheetSpec, page: SheetLayout.standardPage);
+    return SheetProjection(
+      pageSize: layout.page,
+      markerCenters: layout.cornerMarkerCenters,
+      markerSide: layout.template.markerSide * layout.scale,
+      area: area,
+    );
+  }
+
+  /// R3: cỡ hiển thị của ô mốc = cạnh mốc in thật × tỉ lệ khung ảo
+  /// (kẹp trong khoảng đọc được trên màn hình nhỏ).
+  double get _markerVisualSide {
+    final p = _projection();
+    if (p == null) return 56;
+    return p.projectedMarkerSide.clamp(34.0, 120.0);
+  }
+
+  /// R3: bán kính "khoá" — tâm ô cách một ứng viên mốc ≤ 0.9 × cỡ ô hiển thị
+  /// thì coi như ô ấy đã bám đúng mốc (viền xanh).
+  double get _lockRadius => _markerVisualSide * 0.9;
 
   /// Đang phân tích 1 khung preview (trong isolate) — chặn chồng khung.
   bool _analyzing = false;
@@ -610,12 +645,24 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     return LayoutBuilder(builder: (context, constraints) {
       // R2: kích thước vùng preview — dùng cho quy đổi khung ↔ màn hình.
       _previewArea = constraints.biggest;
+      final projection = _projection();
       return Stack(
         fit: StackFit.expand,
         children: [
           CameraPreview(camera),
+          // R3: khung phiếu ảo — outline nét đứt giúp giáo viên canh phiếu
+          // phủ đủ outline; 4 ô mốc chiếu theo khung này (dưới có IgnorePointer
+          // nên không cướp cử chỉ kéo ô).
+          if (projection != null)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: _SheetOutlinePainter(rect: projection.outlineRect),
+                ),
+              ),
+            ),
           // R2: 4 ô vuông đánh số (1..4) — KÉO được; snap tự động về ứng
-          // viên mốc khi detector tự nhìn thấy. Vị trí ban đầu: 4 góc.
+          // viên mốc khi detector tự nhìn thấy. Vị trí mặc định: chiếu mốc.
           ..._buildSquares(),
           // Chỉ báo: pill xanh khi đủ 4 ô nằm trên mốc; ngược lại gợi ý kéo.
           Positioned(
@@ -661,33 +708,47 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     });
   }
 
-  /// R2: 4 ô vuông mốc — vị trí mặc định ở 4 góc, kéo tự do, snap khi
-  /// detector tự tìm được. Trả về danh sách widget `Positioned`.
+  /// R3: 4 ô vuông mốc PHÉP CHIẾU — vị trí mặc định = vị trí chiếu của 4
+  /// tâm mốc góc qua khung phiếu ảo (không phải 4 góc màn hình như R2);
+  /// cỡ ô theo cạnh mốc in thật × tỉ lệ khung; kéo tự do (R2), snap khi
+  /// detector tự tìm được, khóa → viền xanh. Trả về các widget `Positioned`.
   List<Widget> _buildSquares() {
-    // Khởi tạo vị trí mặc định tôi lần đầu build (theo tỉ lệ vùng preview).
-    // CHÚ Ý R2-fix: phải là danh sách THAY ĐỔI ĐƯỢC — `const <Offset>[...]`
-    // tạo List bất biến; _moveSquare gán phần tử sẽ ném UnsupportedError
-    // (setState callback chết im lặng, ô không bao giờ di chuyển — bug demo
-    // ngày 2026-10-23: panStart/panUpdate chạy mà ô đứng yên).
-    _squareCenters ??= <Offset>[
-      Offset(0.15, 0.30), // 1 — trái-trên
-      Offset(0.85, 0.30), // 2 — phải-trên
-      Offset(0.85, 0.70), // 3 — phải-dưới
-      Offset(0.15, 0.70), // 4 — trái-dưới
-    ];
+    // Khởi tạo vị trí mặc định theo PHÉP CHIẾU (lần đầu build, khi đã đo
+    // được vùng preview).
+    // CHÚ Ý R2-fix: giữ nguyên — danh sách THAY ĐỔI ĐƯỢC (không `const`), vì
+    // _moveSquare gán phần tử (bug demo 2026-10-23: `const <Offset>[...]`
+    // làm ô đứng im vì UnsupportedError bị nuốt trong setState).
     final area = _previewArea;
-    final ready = _allSquaresOnMarkers;
+    final projection = _projection();
+    if (_squareCenters == null && projection != null && area.width > 0) {
+      _squareCenters = <Offset>[
+        for (final c in projection.projectedMarkerCenters)
+          Offset(c.dx / area.width, c.dy / area.height),
+      ];
+    }
+    final centers = _squareCenters;
+    if (centers == null) return const [];
+    final locks = _lockStates() ?? const <bool>[false, false, false, false];
+    final side = _markerVisualSide;
     final squares = <Widget>[];
-    for (var i = 0; i < 4; i++) {
-      final c = _squareCenters![i];
+    for (var i = 0; i < 4 && i < centers.length; i++) {
+      final c = centers[i];
       final px = Offset(c.dx * area.width, c.dy * area.height);
-      final color = ready
-          ? Colors.white.withValues(alpha: 0.45)
+      final locked = i < locks.length ? locks[i] : false;
+      // R3: ô KHÓA = viền xanh đậm + nền đục vừa đủ thấy mốc bên dưới;
+      // ô thường = trắng mờ như R2.
+      final fillColor = locked
+          ? Colors.white.withValues(alpha: 0.42)
           : Colors.white.withValues(alpha: 0.28);
+      final borderColor =
+          locked ? const Color(0xFF2E7D32) : Colors.white.withValues(alpha: 0.85);
+      // Trục hit phải rộng hơn trục vẽ (pad 12 mỗi phía) để ngón tay kéo
+      // được cả ô mốc nhỏ khi camera gần phiếu.
+      const hitPad = 12.0;
       squares.add(Positioned(
         key: ObjectKey(i),
-        left: px.dx - _squareSize / 2,
-        top: px.dy - _squareSize / 2,
+        left: px.dx - side / 2 - hitPad,
+        top: px.dy - side / 2 - hitPad,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onPanStart: (_) => _draggingIndex = i,
@@ -698,28 +759,33 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
             if (_autoSnap[i]) setState(() => _autoSnap[i] = false);
           },
           onPanCancel: () => _draggingIndex = null,
-          child: Container(
-            width: _squareSize,
-            height: _squareSize,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: ready ? Colors.white : Colors.white.withValues(alpha: 0.85),
-                width: 2,
+          child: Padding(
+            padding: const EdgeInsets.all(hitPad),
+            child: Container(
+              width: side,
+              height: side,
+              decoration: BoxDecoration(
+                color: fillColor,
+                borderRadius: BorderRadius.circular(side * 0.14),
+                border: Border.all(color: borderColor, width: 2),
+                boxShadow: const [
+                  BoxShadow(blurRadius: 4, color: Colors.black38),
+                ],
               ),
-              boxShadow: const [BoxShadow(blurRadius: 4, color: Colors.black38)],
-            ),
-            child: Center(
-              child: Text(
-                '${i + 1}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  shadows: [
-                    Shadow(blurRadius: 4, color: Colors.black54, offset: Offset(1, 1)),
-                  ],
+              child: Center(
+                child: Text(
+                  '${i + 1}',
+                  style: TextStyle(
+                    color: locked ? const Color(0xFF1B5E20) : Colors.white,
+                    fontSize: (side * 0.34).clamp(14.0, 24.0),
+                    fontWeight: FontWeight.bold,
+                    shadows: const [
+                      Shadow(
+                          blurRadius: 4,
+                          color: Colors.black54,
+                          offset: Offset(1, 1)),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -747,28 +813,97 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     });
   }
 
-  /// R2: đủ 4 mốc? — cả 4 ô tâm nằm < 60% cỡ ô trên ứng viên mốc màn hình.
+  /// R2: đủ 4 mốc? — cả 4 ô tâm nằm trong bán kính khoá của ứng viên mốc màn hình.
   bool get _allSquaresOnMarkers {
+    final states = _lockStates();
+    if (states == null) return false;
+    return states.every((locked) => locked);
+  }
+
+  /// R3: trạng thái khoá từng ô (null khi chưa đủ dữ liệu preview).
+  List<bool>? _lockStates() {
     final centers = _squareCenters;
     final lm = _liveMarkers;
     final area = _previewArea;
-    if (centers == null || lm == null || area == Size.zero) return false;
+    if (centers == null || lm == null || area == Size.zero) return null;
     final frame = lm.frameSize;
     final mapping = CoverMapping(frame: frame, screen: area);
     final candidates = <Offset>[
       for (final c in lm.candidates)
         mapping.toScreen(Offset(c.dx * frame.width, c.dy * frame.height)),
     ];
-    return onConfidentMarkerCount(
-          [
-            for (final c in centers)
-              Offset(c.dx * area.width, c.dy * area.height),
-          ],
-          candidates,
-          _squareSize * 0.6,
-        ) >=
-        4;
+    return squareLockStates(
+      [
+        for (final c in centers)
+          Offset(c.dx * area.width, c.dy * area.height),
+      ],
+      candidates,
+      _lockRadius,
+    );
   }
+}
+
+/// R3: khung phiếu ảo — hình chữ nhật nét đứt trắng mờ quanh outline trang
+/// chuẩn (aspect-fit), gợi ý giáo viên canh phiếu phủ đúng khung.
+final class _SheetOutlinePainter extends CustomPainter {
+  const _SheetOutlinePainter({required this.rect});
+
+  final Rect rect;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const dash = 10.0;
+    const gap = 8.0;
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..color = Colors.white.withValues(alpha: 0.38);
+    // Cạnh trên + dưới: các đoạn dash ngang.
+    for (final sign in const [0.0, 1.0]) {
+      final y = sign * rect.height + rect.top;
+      for (var x = rect.left; x < rect.right; x += dash + gap) {
+        canvas.drawLine(
+          Offset(x, y),
+          Offset(math.min(x + dash, rect.right), y),
+          paint,
+        );
+      }
+    }
+    // Cạnh trái + phải: các đoạn dash dọc.
+    for (final sign in const [0.0, 1.0]) {
+      final x = sign * rect.width + rect.left;
+      for (var y = rect.top; y < rect.bottom; y += dash + gap) {
+        canvas.drawLine(
+          Offset(x, y),
+          Offset(x, math.min(y + dash, rect.bottom)),
+          paint,
+        );
+      }
+    }
+    // 4 góc emphasis (nét liền ngắn) — đúng chỗ 4 mốc góc thường khuất.
+    const corner = 22.0;
+    final cornerPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..color = Colors.white.withValues(alpha: 0.6);
+    final corners = <Offset>[
+      rect.topLeft,
+      rect.topRight,
+      rect.bottomRight,
+      rect.bottomLeft,
+    ];
+    final dirX = <double>[1, -1, -1, 1];
+    final dirY = <double>[1, 1, -1, -1];
+    for (var i = 0; i < corners.length; i++) {
+      final c = corners[i];
+      canvas.drawLine(c, c.translate(corner * dirX[i], 0), cornerPaint);
+      canvas.drawLine(c, c.translate(0, corner * dirY[i]), cornerPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_SheetOutlinePainter oldDelegate) =>
+      oldDelegate.rect != rect;
 }
 
 /// R2: pill trạng thái overlay — xanh khi đủ 4 ô nằm trên mốc, nhạt khi
