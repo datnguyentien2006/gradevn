@@ -36,6 +36,60 @@ void main() {
     expect(detection.quad, isNull);
   });
 
+  test('detectGray: 4 ô vuông đen ở góc + vòng đen rỗng nhiễu → đủ quad', () {
+    const squareSide = 40;
+    const centers = [
+      Offset(60, 60),
+      Offset(740, 60),
+      Offset(740, 1120),
+      Offset(60, 1120),
+    ];
+    final gray = _syntheticGray(
+      width: 800,
+      height: 1180,
+      squareSide: squareSide,
+      squares: centers,
+      rings: const [Offset(400, 300), Offset(400, 900)],
+    );
+    final detection =
+        const SheetMarkerDetector().detectGray(gray, width: 800, height: 1180);
+    expect(detection.quad, isNotNull, reason: 'Thấy đủ 4 ô vuông đặc ở 4 góc');
+    final quad = detection.quad!;
+    expect(quad.tl.dx, closeTo(60, 12));
+    expect(quad.tl.dy, closeTo(60, 12));
+    expect(quad.br.dx, closeTo(740, 12));
+    expect(quad.br.dy, closeTo(1120, 12));
+  });
+
+  test('detectGray: ảnh nhiễu không có ô vuông → quad null', () {
+    final gray = _syntheticGray(
+      width: 800,
+      height: 600,
+      squareSide: 40,
+      squares: const [],
+      rings: const [Offset(200, 200), Offset(600, 400), Offset(400, 100)],
+    );
+    final detection =
+        const SheetMarkerDetector().detectGray(gray, width: 800, height: 600);
+    expect(detection.quad, isNull);
+  });
+
+  test('detectGray chia sẻ lõi với detect: quad trùng nhau trên fixture', () {
+    final gray = _grayFromPng(fixtureBytes);
+    final det = const SheetMarkerDetector().detect(fixtureBytes);
+    final detGray = const SheetMarkerDetector()
+        .detectGray(gray.data, width: gray.width, height: gray.height);
+    if (det.quad == null) {
+      expect(detGray.quad, isNull);
+      return;
+    }
+    expect(detGray.quad, isNotNull, reason: 'Hai ngõ vào phải cùng cho kết quả');
+    expect(detGray.quad!.tl.dx, closeTo(det.quad!.tl.dx, 2.0));
+    expect(detGray.quad!.tr.dx, closeTo(det.quad!.tr.dx, 2.0));
+    expect(detGray.quad!.br.dy, closeTo(det.quad!.br.dy, 2.0));
+    expect(detGray.quad!.bl.dy, closeTo(det.quad!.bl.dy, 2.0));
+  });
+
   test('warp nhận dạng: quad = tâm mốc chuẩn → đo/giải mã đúng fixture', () {
     final detection = const SheetMarkerDetector().detect(fixtureBytes);
     final quad = detection.quad!;
@@ -264,6 +318,77 @@ List<int> _bilinear(img.Image image, double x, double y) {
     out.add((top + (bottom - top) * fy).round().clamp(0, 255));
   }
   return out;
+}
+
+/// Ảnh xám thuần (mỗi pixel 1 byte) + kích thước — đầu vào của [detectGray].
+final class GrayImage {
+  const GrayImage(this.data, this.width, this.height);
+
+  final Uint8List data;
+  final int width;
+  final int height;
+}
+
+/// Đổi PNG bất kỳ → ảnh xám thuần (công thức luminance trùng detector).
+GrayImage _grayFromPng(Uint8List pngBytes) {
+  final decoded = img.decodeImage(pngBytes)!;
+  final width = decoded.width;
+  final height = decoded.height;
+  final bytes = decoded.getBytes();
+  final channels = decoded.numChannels;
+  final data = Uint8List(width * height);
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final idx = (y * width + x) * channels;
+      final r = bytes[idx];
+      final hasRgb = channels >= 3 && idx + 2 < bytes.length;
+      final g = hasRgb ? bytes[idx + 1] : r;
+      final b = hasRgb ? bytes[idx + 2] : r;
+      data[y * width + x] = (r * 299 + g * 587 + b * 114) ~/ 1000;
+    }
+  }
+  return GrayImage(data, width, height);
+}
+
+/// Ảnh xám tổng hợp: nền trắng + các ô vuông đen (mốc) + các vòng đen rỗng
+/// (nhiễu chữ/bong bóng — lọc theo tỉ lệ lấp đầy phải loại chúng).
+Uint8List _syntheticGray({
+  required int width,
+  required int height,
+  required int squareSide,
+  required List<Offset> squares,
+  required List<Offset> rings,
+  int ringRadius = 22,
+}) {
+  final data = Uint8List(width * height);
+  data.fillRange(0, data.length, 255);
+  void fillRect(double cx, double cy, int side, int value) {
+    final half = side ~/ 2;
+    final x0 = (cx - half).floor().clamp(0, width - 1);
+    final x1 = (cx + half).floor().clamp(0, width - 1);
+    final y0 = (cy - half).floor().clamp(0, height - 1);
+    final y1 = (cy + half).floor().clamp(0, height - 1);
+    for (var y = y0; y <= y1; y++) {
+      data.fillRange(y * width + x0, y * width + x1 + 1, value);
+    }
+  }
+
+  for (final s in squares) {
+    fillRect(s.dx, s.dy, squareSide, 20);
+  }
+  // Vòng: đậm ở vành, trắng ở ruột — không đủ "đặc" để lọt qua lọc.
+  for (final r in rings) {
+    for (var y = 0; y < height; y++) {
+      for (var x = 0; x < width; x++) {
+        final d = (x - r.dx) * (x - r.dx) + (y - r.dy) * (y - r.dy);
+        if (d <= ringRadius * ringRadius &&
+            d >= (ringRadius - 6) * (ringRadius - 6)) {
+          data[y * width + x] = 30;
+        }
+      }
+    }
+  }
+  return data;
 }
 
 extension _Shade on Uint8List {

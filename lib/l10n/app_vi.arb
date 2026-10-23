@@ -26,15 +26,20 @@
   "scanContestMissing": "Không tìm thấy kỳ thi.",
   "scanCameraUnavailable": "Camera không khả dụng trên thiết bị này.",
   "scanPickSheetImage": "Chọn ảnh phiếu từ tệp…",
-  "scanGuidance": "Đặt trọn khung phiếu trong hình chữ nhật, trên nền sáng",
+  "scanGuidance": "Đặt phiếu trên nền sáng, chụp cách này một khoảng vừa phải — phiếu có thể nghiêng hoặc nằm lệch",
   "scanCapture": "Chụp phiếu",
   "scanProcessing": "Đang chấm phiếu…",
-  "scanFrameNotFound": "Không đọc được khung phiếu trên ảnh.",
-  "scanFrameNotFoundHint": "Chụp lại cho trọn khung phiếu, hoặc cắt lại vùng ảnh rồi thử tiếp.",
-  "scanRetake": "Chụp lại",
-  "scanTryCrop": "Kiểm tra / cắt ảnh",
-  "cropTitle": "Cắt vùng phiếu",
-  "cropApply": "Kiểm tra",
+  "scanMarkerOverlayLocated": "Đã đủ 4 mốc",
+  "cropTitle": "Ghim mốc phiếu",
+  "cropPickMarkers": "Ghim 4 ô vuông đen theo thứ tự: trái-trên → phải-trên → phải-dưới → trái-dưới",
+  "cropPinsProgress": "Nắn phẳng ({count}/{total})",
+  "@cropPinsProgress": {
+    "placeholders": {
+      "count": { "type": "int" },
+      "total": { "type": "int" }
+    }
+  },
+  "cropResetPins": "Chọn lại",
   "cropRetake": "Chụp lại",
   "resultTitle": "Kết quả phiếu",
   "resultScore": "Điểm: {score}/{max}",
@@ -122,12 +127,35 @@
   },
 
   "contestDetailScanButton": "Chấm phiếu bằng camera",
-  "printBlankSheet": "In phiếu mẫu",
-  "blankSheetSavedMessage": "Đã lưu phiếu mẫu: {path}",
-  "@blankSheetSavedMessage": {
+
+  "keyEditorTitle": "Nhập mã đề",
+  "keyEditorTabCode": "MÃ ĐỀ",
+  "keyEditorTabAnswers": "TRẢ LỜI",
+  "keyEditorCodePreview": "Mã đề ghép từ các ô đã chọn",
+  "keyEditorDigitSlot": "Chữ số {index}",
+  "@keyEditorDigitSlot": {
     "placeholders": {
-      "path": { "type": "String" }
+      "index": { "type": "int" }
     }
   },
-  "blankSheetFailed": "Không tạo được phiếu mẫu."
+  "keyEditorSave": "Lưu mã đề",
+  "keyEditorCodeIncomplete": "Chưa chọn đủ {slots} chữ số của mã đề.",
+  "@keyEditorCodeIncomplete": {
+    "placeholders": {
+      "slots": { "type": "int" }
+    }
+  },
+  "keyEditorUnansweredConfirm": "Còn {count} câu chưa tô đáp án trên phiếu. Vẫn lưu mã đề này?",
+  "@keyEditorUnansweredConfirm": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "keyEditorNoEOnPaper": "Phiếu này không có ô E",
+  "keyEditorSavedMessage": "Đã lưu mã đề {code}.",
+  "@keyEditorSavedMessage": {
+    "placeholders": {
+      "code": { "type": "String" }
+    }
+  }
 }

@@ -1,5 +1,7 @@
-// Màn chấm phiếu bằng camera (M3): ngắm khung → chụp → quét + chấm trong
-// isolate → xem kết quả → lưu DB + ảnh vào bộ nhớ ứng dụng.
+// Màn chấm phiếu bằng camera (R1): preview TỰ DO (không còn ô ngắm chữ nhật),
+// overlay đồng thời "Đã đủ 4 mốc" khi bộ phát hiện thấy đủ 4 ô vuông trong
+// luồng preview; nút chụp LUÔN bật; chấm trong isolate; thiếu mốc → màn ghim
+// 4 ô vuông đen (CropReviewScreen) rồi chạy lại pipeline trên ảnh đã nắn.
 //
 // Quy ước an toàn:
 // - Camera chỉ khởi tạo trên Android/iOS (Platform check) và MỌI lệnh camera
@@ -8,6 +10,7 @@
 //   dẫn + nút chọn ảnh từ tệp (file_picker): luồng chấm vẫn chạy được.
 
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
@@ -20,14 +23,18 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../../data/cv/scan_flow.dart' show GradedScan, processPhoto;
+import '../../data/cv/sheet_alignment.dart';
 import '../../data/cv/sheet_painter.dart' show renderMarkedSheet;
-import '../../domain/entities/graded_sheet.dart';
 import '../../domain/entities/class_room.dart';
 import '../../domain/entities/contest.dart';
+import '../../domain/entities/graded_sheet.dart';
 import '../../domain/entities/sheet_spec.dart';
 import '../../domain/services/sheet_layout.dart';
 import '../state/providers.dart';
 import 'crop_review_screen.dart';
+
+/// Bề rộng mục tiêu khi lấy mẫu luồng Y (đồng bộ [SheetMarkerDetector]).
+const int _previewTargetWidth = 640;
 
 final class ScanScreen extends ConsumerStatefulWidget {
   const ScanScreen({super.key, required this.contestId});
@@ -47,6 +54,12 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   CameraController? _controller;
   bool _cameraFailed = false;
 
+  /// Overlay mốc: null = chưa biết; true = đã thấy đủ 4 mốc trong luồng.
+  bool? _markersReady;
+
+  /// Đang phân tích 1 khung preview (trong isolate) — chặn chồng khung.
+  bool _analyzing = false;
+
   @override
   void initState() {
     super.initState();
@@ -62,8 +75,10 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
       final keys = <AnswerKey>[];
       final students = <Student>[];
       if (contest != null) {
-        final keyStream =
-            await ref.read(answerKeyRepositoryProvider).watchByContest(contest.id).first;
+        final keyStream = await ref
+            .read(answerKeyRepositoryProvider)
+            .watchByContest(contest.id)
+            .first;
         keys.addAll(keyStream);
         final classId = contest.classRoomId;
         if (classId != null) {
@@ -107,7 +122,8 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
         description,
         ResolutionPreset.max,
         enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.jpeg,
+        // YUV420 để đọc kênh Y trên luồng preview (băng "đã đủ 4 mốc").
+        imageFormatGroup: ImageFormatGroup.yuv420,
       );
       await controller.initialize();
       if (!mounted) {
@@ -115,9 +131,73 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
         return;
       }
       setState(() => _controller = controller);
+      _startMarkerOverlay();
     } catch (_) {
       if (mounted) setState(() => _cameraFailed = true);
     }
+  }
+
+  /// Overlay "đã đủ 4 mốc": lấy mẫu kênh Y của khung preview, gửi isolate chạy
+  /// [SheetMarkerDetector.detectGray]; khung nằm ngang (sensor quay 90°) thì
+  /// thử thêm chiều xoay. Lỗi nào → tắt overlay, không lan lỗi lên UI.
+  void _startMarkerOverlay() {
+    final controller = _controller;
+    if (controller == null) return;
+    try {
+      controller.startImageStream(_onCameraImage);
+    } catch (_) {
+      // Luồng preview không hỗ trợ: bỏ overlay, luồng chấm vẫn bình thường.
+    }
+  }
+
+  void _onCameraImage(CameraImage image) {
+    if (_analyzing || _busy || !mounted) return;
+    if (image.planes.isEmpty) return;
+    final y = image.planes.first;
+    final width = image.width;
+    final height = image.height;
+    final stride = y.bytesPerRow;
+    if (stride * (height - 1) + width > y.bytes.length) return; // khung cụt
+
+    _analyzing = true;
+    // Lấy mẫu lấy mỗi f-pixel một: đủ trông ô mốc mà isolate nhẹ.
+    final f = (width ~/ _previewTargetWidth).clamp(1, width);
+    final dw = width ~/ f;
+    final dh = height ~/ f;
+    final gray = Uint8List(dw * dh);
+    for (var dy = 0; dy < dh; dy++) {
+      final srcRow = stride * (dy * f);
+      for (var dx = 0; dx < dw; dx++) {
+        gray[dy * dw + dx] = y.bytes[srcRow + dx * f];
+      }
+    }
+    Isolate.run(() => _analyzeMarkerFrame(gray, dw, dh)).then((ready) {
+      _analyzing = false;
+      if (!mounted || _busy) return;
+      if (ready != _markersReady) {
+        setState(() => _markersReady = ready);
+      }
+    }).catchError((Object _) {
+      _analyzing = false;
+      // Khung lỗi (memory/rotation lạ): bỏ qua, khung sau tiếp tục phân tích.
+    });
+  }
+
+  /// Hàm top-level cho isolate: thử ảnh thu nhỏ, chưa đủ thì thử xoay 90°
+  /// (sensor preview có thể nằm ngang → tỉ lệ khung bị lệch, không tin cậy).
+  static bool _analyzeMarkerFrame(Uint8List gray, int w, int h) {
+    const detector = SheetMarkerDetector();
+    if (detector.detectGray(gray, width: w, height: h).hasAllMarkers) {
+      return true;
+    }
+    // Xoay 90°: điểm ảnh (x, y) → (y, w - 1 - x) trên ảnh mới (bề rộng h).
+    final rotated = Uint8List(w * h);
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        rotated[y * h + (w - 1 - x)] = gray[y * w + x];
+      }
+    }
+    return detector.detectGray(rotated, width: h, height: w).hasAllMarkers;
   }
 
   @override
@@ -126,7 +206,8 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     super.dispose();
   }
 
-  /// Chụp ảnh → quét + chấm.
+  /// Chụp ảnh → quét + chấm. Nút chụp LUÔN bật (R1): chụp khi chưa đủ mốc
+  /// vẫn ổn — thiếu mốc sẽ rơi vào màn ghim mốc.
   Future<void> _capture() async {
     if (_busy || _loading) return;
     final l10n = AppLocalizations.of(context)!;
@@ -134,10 +215,15 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     try {
       final controller = _controller;
       if (controller == null || !controller.value.isInitialized) return;
+      try {
+        await controller.stopImageStream(); // ngừng luồng preview cho nhẹ.
+      } catch (_) {
+        // ngừng tốt nhất có thể; chụp vẫn tiếp tục.
+      }
       final file = await controller.takePicture();
       final bytes = await file.readAsBytes();
       if (!mounted) return;
-      await _process(bytes);
+      await _process(Uint8List.fromList(bytes));
     } catch (e) {
       messenger.showSnackBar(
           SnackBar(content: Text(l10n.scanError(e.toString()))));
@@ -161,7 +247,8 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     }
   }
 
-  /// Quét + chấm ảnh (isolate) → dialog lỗi hoặc bottom sheet kết quả.
+  /// Quét + chấm ảnh (isolate): đủ mốc → bottom sheet kết quả; thiếu mốc →
+  /// màn ghim 4 ô vuông đen, ghim xong nắn phẳng → chạy lại pipeline.
   Future<void> _process(Uint8List bytes) async {
     final contest = _contest;
     if (contest == null) return;
@@ -186,44 +273,24 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     if (!mounted) return;
     setState(() => _busy = false);
     if (graded == null) {
-      await _showFrameNotFound(bytes);
+      await _openCrop(bytes);
     } else {
       await _showResult(graded);
     }
   }
 
-  /// Khung phiếu không đọc được: chụp lại hoặc mở màn cắt ảnh rồi thử tiếp.
-  Future<void> _showFrameNotFound(Uint8List bytes) async {
-    if (!mounted) return;
-    final l10n = AppLocalizations.of(context)!;
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.scanFrameNotFound),
-        content: Text(l10n.scanFrameNotFoundHint),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: Text(l10n.scanRetake),
-          ),
-          FilledButton(
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              _openCrop(bytes);
-            },
-            child: Text(l10n.scanTryCrop),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _openCrop(Uint8List bytes) async {
     if (!mounted) return;
-    final cropped = await Navigator.of(context).push<Uint8List>(
-      MaterialPageRoute(builder: (_) => CropReviewScreen(imageBytes: bytes)),
+    final contest = _contest;
+    if (contest == null) return;
+    final layout =
+        SheetLayout.forSpec(contest.sheetSpec, page: SheetLayout.standardPage);
+    final rectified = await Navigator.of(context).push<Uint8List>(
+      MaterialPageRoute(
+        builder: (_) => CropReviewScreen(imageBytes: bytes, layout: layout),
+      ),
     );
-    if (cropped != null) await _process(cropped);
+    if (rectified != null) await _process(rectified);
   }
 
   Future<void> _showResult(GradedScan graded) async {
@@ -349,7 +416,16 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
       fit: StackFit.expand,
       children: [
         CameraPreview(camera),
-        Positioned.fill(child: CustomPaint(painter: const _GuidancePainter())),
+        // R1: không còn ô ngắm — chụp tự do; chỉ báo khi đủ 4 mốc mới hiện.
+        if (_markersReady == true)
+          Positioned(
+            top: 12,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: _MarkerBanner(label: l10n.scanMarkerOverlayLocated),
+            ),
+          ),
         Positioned(
           left: 12,
           right: 12,
@@ -365,7 +441,7 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
         ),
         Positioned(
           left: 12,
-          top: 12,
+          bottom: 148,
           child: _PickIconButton(onPick: _pickImage, tooltip: l10n.scanPickSheetImage),
         ),
         Positioned(
@@ -379,6 +455,32 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Băng thông báo "Đã đủ 4 mốc" trên preview.
+final class _MarkerBanner extends StatelessWidget {
+  const _MarkerBanner({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.green.shade700,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.check_circle_outline, color: Colors.white, size: 18),
+          const SizedBox(width: 6),
+          Text(label, style: const TextStyle(color: Colors.white)),
+        ],
+      ),
     );
   }
 }
@@ -430,43 +532,6 @@ final class _FallbackPicker extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Overlay ngắm: chữ nhật trong suốt tối với "cửa sổ" trong suốt giữa —
-/// khớp tỉ lệ trang A4 của phiếu.
-final class _GuidancePainter extends CustomPainter {
-  const _GuidancePainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const pageRatio = 1240 / 1754; // SheetLayout.standardPage
-    var windowW = size.width * 0.86;
-    var windowH = windowW / pageRatio;
-    if (windowH > size.height * 0.66) {
-      windowH = size.height * 0.66;
-      windowW = windowH * pageRatio;
-    }
-    final window = Rect.fromCenter(
-      center: Offset(size.width / 2, size.height / 2 - 40),
-      width: windowW,
-      height: windowH,
-    );
-    final full = Offset.zero & size;
-    canvas.saveLayer(full, Paint());
-    canvas.drawRect(full, Paint()..color = Colors.black54);
-    canvas.drawRect(window, Paint()..blendMode = BlendMode.clear);
-    canvas.restore();
-    canvas.drawRect(
-      window,
-      Paint()
-        ..color = Colors.white
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_GuidancePainter oldDelegate) => false;
 }
 
 /// Bottom sheet kết quả: điểm + thống kê + SBD/mã đề/học sinh + điểm phần.

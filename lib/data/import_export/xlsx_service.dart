@@ -62,7 +62,7 @@ abstract interface class SpreadsheetService {
     required List<ResultRow> rows,
   });
 
-  /// Ghi các mã đề ra .xlsx (định dạng chuẩn để đọc lại جد bằng readKeys).
+  /// Ghi các mã đề ra .xlsx (định dạng chuẩn để đọc lại bằng readKeys).
   Future<void> writeKeys({
     required String filePath,
     required List<ParsedKey> keys,

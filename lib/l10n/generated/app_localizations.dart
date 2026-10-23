@@ -247,7 +247,7 @@ abstract class AppLocalizations {
   /// No description provided for @scanGuidance.
   ///
   /// In vi, this message translates to:
-  /// **'Đặt trọn khung phiếu trong hình chữ nhật, trên nền sáng'**
+  /// **'Đặt phiếu trên nền sáng, chụp cách này một khoảng vừa phải — phiếu có thể nghiêng hoặc nằm lệch'**
   String get scanGuidance;
 
   /// No description provided for @scanCapture.
@@ -262,41 +262,35 @@ abstract class AppLocalizations {
   /// **'Đang chấm phiếu…'**
   String get scanProcessing;
 
-  /// No description provided for @scanFrameNotFound.
+  /// No description provided for @scanMarkerOverlayLocated.
   ///
   /// In vi, this message translates to:
-  /// **'Không đọc được khung phiếu trên ảnh.'**
-  String get scanFrameNotFound;
-
-  /// No description provided for @scanFrameNotFoundHint.
-  ///
-  /// In vi, this message translates to:
-  /// **'Chụp lại cho trọn khung phiếu, hoặc cắt lại vùng ảnh rồi thử tiếp.'**
-  String get scanFrameNotFoundHint;
-
-  /// No description provided for @scanRetake.
-  ///
-  /// In vi, this message translates to:
-  /// **'Chụp lại'**
-  String get scanRetake;
-
-  /// No description provided for @scanTryCrop.
-  ///
-  /// In vi, this message translates to:
-  /// **'Kiểm tra / cắt ảnh'**
-  String get scanTryCrop;
+  /// **'Đã đủ 4 mốc'**
+  String get scanMarkerOverlayLocated;
 
   /// No description provided for @cropTitle.
   ///
   /// In vi, this message translates to:
-  /// **'Cắt vùng phiếu'**
+  /// **'Ghim mốc phiếu'**
   String get cropTitle;
 
-  /// No description provided for @cropApply.
+  /// No description provided for @cropPickMarkers.
   ///
   /// In vi, this message translates to:
-  /// **'Kiểm tra'**
-  String get cropApply;
+  /// **'Ghim 4 ô vuông đen theo thứ tự: trái-trên → phải-trên → phải-dưới → trái-dưới'**
+  String get cropPickMarkers;
+
+  /// No description provided for @cropPinsProgress.
+  ///
+  /// In vi, this message translates to:
+  /// **'Nắn phẳng ({count}/{total})'**
+  String cropPinsProgress(int count, int total);
+
+  /// No description provided for @cropResetPins.
+  ///
+  /// In vi, this message translates to:
+  /// **'Chọn lại'**
+  String get cropResetPins;
 
   /// No description provided for @cropRetake.
   ///
@@ -484,23 +478,65 @@ abstract class AppLocalizations {
   /// **'Chấm phiếu bằng camera'**
   String get contestDetailScanButton;
 
-  /// No description provided for @printBlankSheet.
+  /// No description provided for @keyEditorTitle.
   ///
   /// In vi, this message translates to:
-  /// **'In phiếu mẫu'**
-  String get printBlankSheet;
+  /// **'Nhập mã đề'**
+  String get keyEditorTitle;
 
-  /// No description provided for @blankSheetSavedMessage.
+  /// No description provided for @keyEditorTabCode.
   ///
   /// In vi, this message translates to:
-  /// **'Đã lưu phiếu mẫu: {path}'**
-  String blankSheetSavedMessage(String path);
+  /// **'MÃ ĐỀ'**
+  String get keyEditorTabCode;
 
-  /// No description provided for @blankSheetFailed.
+  /// No description provided for @keyEditorTabAnswers.
   ///
   /// In vi, this message translates to:
-  /// **'Không tạo được phiếu mẫu.'**
-  String get blankSheetFailed;
+  /// **'TRẢ LỜI'**
+  String get keyEditorTabAnswers;
+
+  /// No description provided for @keyEditorCodePreview.
+  ///
+  /// In vi, this message translates to:
+  /// **'Mã đề ghép từ các ô đã chọn'**
+  String get keyEditorCodePreview;
+
+  /// No description provided for @keyEditorDigitSlot.
+  ///
+  /// In vi, this message translates to:
+  /// **'Chữ số {index}'**
+  String keyEditorDigitSlot(int index);
+
+  /// No description provided for @keyEditorSave.
+  ///
+  /// In vi, this message translates to:
+  /// **'Lưu mã đề'**
+  String get keyEditorSave;
+
+  /// No description provided for @keyEditorCodeIncomplete.
+  ///
+  /// In vi, this message translates to:
+  /// **'Chưa chọn đủ {slots} chữ số của mã đề.'**
+  String keyEditorCodeIncomplete(int slots);
+
+  /// No description provided for @keyEditorUnansweredConfirm.
+  ///
+  /// In vi, this message translates to:
+  /// **'Còn {count} câu chưa tô đáp án trên phiếu. Vẫn lưu mã đề này?'**
+  String keyEditorUnansweredConfirm(int count);
+
+  /// No description provided for @keyEditorNoEOnPaper.
+  ///
+  /// In vi, this message translates to:
+  /// **'Phiếu này không có ô E'**
+  String get keyEditorNoEOnPaper;
+
+  /// No description provided for @keyEditorSavedMessage.
+  ///
+  /// In vi, this message translates to:
+  /// **'Đã lưu mã đề {code}.'**
+  String keyEditorSavedMessage(String code);
 }
 
 class _AppLocalizationsDelegate

@@ -88,7 +88,7 @@ class AppLocalizationsVi extends AppLocalizations {
 
   @override
   String get scanGuidance =>
-      'Đặt trọn khung phiếu trong hình chữ nhật, trên nền sáng';
+      'Đặt phiếu trên nền sáng, chụp cách này một khoảng vừa phải — phiếu có thể nghiêng hoặc nằm lệch';
 
   @override
   String get scanCapture => 'Chụp phiếu';
@@ -97,23 +97,22 @@ class AppLocalizationsVi extends AppLocalizations {
   String get scanProcessing => 'Đang chấm phiếu…';
 
   @override
-  String get scanFrameNotFound => 'Không đọc được khung phiếu trên ảnh.';
+  String get scanMarkerOverlayLocated => 'Đã đủ 4 mốc';
 
   @override
-  String get scanFrameNotFoundHint =>
-      'Chụp lại cho trọn khung phiếu, hoặc cắt lại vùng ảnh rồi thử tiếp.';
+  String get cropTitle => 'Ghim mốc phiếu';
 
   @override
-  String get scanRetake => 'Chụp lại';
+  String get cropPickMarkers =>
+      'Ghim 4 ô vuông đen theo thứ tự: trái-trên → phải-trên → phải-dưới → trái-dưới';
 
   @override
-  String get scanTryCrop => 'Kiểm tra / cắt ảnh';
+  String cropPinsProgress(int count, int total) {
+    return 'Nắn phẳng ($count/$total)';
+  }
 
   @override
-  String get cropTitle => 'Cắt vùng phiếu';
-
-  @override
-  String get cropApply => 'Kiểm tra';
+  String get cropResetPins => 'Chọn lại';
 
   @override
   String get cropRetake => 'Chụp lại';
@@ -228,13 +227,40 @@ class AppLocalizationsVi extends AppLocalizations {
   String get contestDetailScanButton => 'Chấm phiếu bằng camera';
 
   @override
-  String get printBlankSheet => 'In phiếu mẫu';
+  String get keyEditorTitle => 'Nhập mã đề';
 
   @override
-  String blankSheetSavedMessage(String path) {
-    return 'Đã lưu phiếu mẫu: $path';
+  String get keyEditorTabCode => 'MÃ ĐỀ';
+
+  @override
+  String get keyEditorTabAnswers => 'TRẢ LỜI';
+
+  @override
+  String get keyEditorCodePreview => 'Mã đề ghép từ các ô đã chọn';
+
+  @override
+  String keyEditorDigitSlot(int index) {
+    return 'Chữ số $index';
   }
 
   @override
-  String get blankSheetFailed => 'Không tạo được phiếu mẫu.';
+  String get keyEditorSave => 'Lưu mã đề';
+
+  @override
+  String keyEditorCodeIncomplete(int slots) {
+    return 'Chưa chọn đủ $slots chữ số của mã đề.';
+  }
+
+  @override
+  String keyEditorUnansweredConfirm(int count) {
+    return 'Còn $count câu chưa tô đáp án trên phiếu. Vẫn lưu mã đề này?';
+  }
+
+  @override
+  String get keyEditorNoEOnPaper => 'Phiếu này không có ô E';
+
+  @override
+  String keyEditorSavedMessage(String code) {
+    return 'Đã lưu mã đề $code.';
+  }
 }

@@ -198,10 +198,6 @@ final class SheetMarkerDetector {
     }
     if (debug) print('detect: ảnh $w×$h');
 
-    final f = math.max(1, (w / targetWidth).floor());
-    final dw = w ~/ f;
-    final dh = h ~/ f;
-
     // Độ xám thô: lấy kênh đầu (ảnh chụp RGB; luminance đầy đủ không cần thiết
     // cho bước lọc ô vuông đen).
     final bytes = decoded.getBytes();
@@ -218,6 +214,48 @@ final class SheetMarkerDetector {
       final b = bytes[idx + 2];
       return (r * 299 + g * 587 + b * 114) ~/ 1000;
     }
+
+    return _detectFromGray(grayAt, w: w, h: h, tpl: tpl);
+  }
+
+  /// Phát hiện mốc trên ẢNH XÁM THÔ (mỗi pixel 1 byte, liền mạch, không stride)
+  /// — nhập vào trực tiếp từ luồng Y-plane của camera cho overlay "đủ 4 mốc".
+  ///
+  /// Chia sẻ chính xác cùng lõi thuật toán với [detect] (ngưỡng bám độ sáng,
+  /// lọc ô vuông đặc, chọn góc bằng convex hull); nguồn PNG dùng [detect].
+  MarkerDetection detectGray(
+    Uint8List gray, {
+    required int width,
+    required int height,
+    SheetTemplate? template,
+  }) {
+    final tpl = template ?? SheetTemplate.tn40Standard;
+    if (width < 120 || height < 120) {
+      return const MarkerDetection(quad: null, candidates: []);
+    }
+    if (debug) print('detectGray: ảnh $width×$height');
+
+    int grayAt(int x, int y) {
+      if (x < 0 || y < 0 || x >= width || y >= height) return 255;
+      final idx = y * width + x;
+      if (idx >= gray.length) return 255;
+      return gray[idx];
+    }
+
+    return _detectFromGray(grayAt, w: width, h: height, tpl: tpl);
+  }
+
+  /// Lõi chung của [detect]/[detectGray]: ngưỡng bám độ sáng toàn ảnh →
+  /// mask tối thu nhỏ → lọc ô vuông đặc → chọn 4 góc bằng convex hull.
+  MarkerDetection _detectFromGray(
+    int Function(int x, int y) grayAt, {
+    required int w,
+    required int h,
+    required SheetTemplate tpl,
+  }) {
+    final f = math.max(1, (w / targetWidth).floor());
+    final dw = w ~/ f;
+    final dh = h ~/ f;
 
     // Ngưỡng "tối" bám độ sáng toàn ảnh (điều kiện sáng thay đổi).
     var sum = 0;
