@@ -396,7 +396,7 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   }
 
   /// R2: quad ghim theo hệ KHUNG HIỂN THỊ (nghịch của TỈ LỆ ô vuông xa tâm
-  /// khung có sẵn _liveMarkers) + tamaño khung — pipeline dùng làm lưng dự phòng.
+  /// khung có sẵn _liveMarkers) + kích thước khung — pipeline dùng làm lưới dự phòng.
   (AlignmentQuad, Size)? _captureOverlayQuad() {
     final lm = _liveMarkers;
     final centers = _squareCenters;
