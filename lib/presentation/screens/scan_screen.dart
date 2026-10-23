@@ -883,8 +883,11 @@ final class _ResultSheet extends StatelessWidget {
     final result = graded.result;
     final scan = graded.photo.scan;
     final studentName = graded.student?.fullName ?? l10n.resultStudentNotFound;
+    // R2: cộng VIEW PADDING đáy (thanh điều hướng Android) vào đệm đáy —
+    // hai nút "Lưu kết quả"/"Chụp phiếu khác" phải nổi trên thanh navigation.
+    final bottomInset = MediaQuery.of(context).viewPadding.bottom;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+      padding: EdgeInsets.fromLTRB(20, 20, 20, 24 + bottomInset),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
