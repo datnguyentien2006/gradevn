@@ -28,6 +28,14 @@ import 'package:image/image.dart' as img;
 
 import '../../domain/services/sheet_template.dart';
 
+/// Đọc kích thước ảnh (R2): chỉ decode để lấy width/height — dùng trong
+/// isolate, không bao giờ chạy trên thread UI. Ảnh hỏng → null.
+Size? probeImageSize(Uint8List imageBytes) {
+  final decoded = img.decodeImage(imageBytes);
+  if (decoded == null) return null;
+  return Size(decoded.width.toDouble(), decoded.height.toDouble());
+}
+
 /// 4 tâm mốc trên ảnh gốc: [tl, tr, br, bl] (theo kim đồng hồ).
 final class AlignmentQuad {
   const AlignmentQuad(this.tl, this.tr, this.br, this.bl);

@@ -6,12 +6,12 @@
 // Toạ độ ghim lưu theo pixel của ẢNH (không phải pixel màn hình) để bước warp
 // luôn khớp; vẽ overlay thì quy đổi theo tỉ lệ hiển thị (letterbox).
 
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:gradevn/l10n/generated/app_localizations.dart';
-import 'package:image/image.dart' as img;
 
 import '../../data/cv/sheet_alignment.dart';
 import '../../domain/services/sheet_layout.dart';
@@ -43,16 +43,30 @@ final class _CropReviewScreenState extends State<CropReviewScreen> {
   double _scale = 1;
   Offset _offset = Offset.zero;
 
+  Size? _imageSize;
+
+  /// R2: probe isolate xong mà ảnh hỏng (null size) → mới hiện trạng thái lỗi.
+  bool _probeFinished = false;
+
+  /// R2: đang nắn phẳng trong isolate (chặn bấm kép + hiện vòng xoay).
+  bool _applying = false;
+
   @override
   void initState() {
     super.initState();
-    // Decode thuần Dart chỉ để biết kích thước ảnh; giữ nguyên bytes gốc.
-    final decoded = img.decodeImage(widget.imageBytes);
-    if (decoded == null) return; // UI hiển thị trạng thái lỗi khi null.
-    _imageSize = Size(decoded.width.toDouble(), decoded.height.toDouble());
+    // R2: decode chỉ để biết kích thước ảnh — chạy TRONG isolate (decode ảnh
+    // ~12 MP trên thread UI là nguồn treo tiết kiệm nhất ở bản R1).
+    Isolate.run(() => probeImageSize(widget.imageBytes)).then((size) {
+      if (!mounted) return;
+      setState(() {
+        _imageSize = size;
+        _probeFinished = true;
+      });
+    }).catchError((Object _) {
+      if (!mounted) return;
+      setState(() => _probeFinished = true); // UI hiện trạng thái lỗi khi null.
+    });
   }
-
-  Size? _imageSize;
 
   /// Chạm ảnh → ghim mốc kế tiếp theo thứ tự nối sẵn; đủ 4 mốc thì chạm
   /// thêm không ghi gì mới (dùng nút "Chọn lại" để ghim từ đầu).
@@ -70,9 +84,11 @@ final class _CropReviewScreenState extends State<CropReviewScreen> {
   }
 
   /// Áp dụng: nắn phẳng theo 4 tâm ghim về trang chuẩn → PNG → pop trả về.
-  void _apply() {
+  /// R2: warp chạy TRONG isolate (ảnh chụp lớn; R1 chạy trên thread UI).
+  Future<void> _apply() async {
     final size = _imageSize;
-    if (size == null || _pins.length != _requiredPins) return;
+    if (size == null || _pins.length != _requiredPins || _applying) return;
+    setState(() => _applying = true);
     final quad = AlignmentQuad(
       _pins[0], // trái-trên
       _pins[1], // phải-trên
@@ -81,13 +97,23 @@ final class _CropReviewScreenState extends State<CropReviewScreen> {
     );
     final centers = widget.layout.cornerMarkerCenters;
     final targetQuad = AlignmentQuad(centers[0], centers[1], centers[2], centers[3]);
-    final warped = const PerspectiveWarper().warpRectify(
-      widget.imageBytes,
-      quad: quad,
-      targetQuad: targetQuad,
-      outputSize: widget.layout.page,
-    );
-    Navigator.of(context).pop(warped);
+    final layout = widget.layout;
+    final bytes = widget.imageBytes;
+    try {
+      final warped = await Isolate.run(
+        () => const PerspectiveWarper().warpRectify(
+          bytes,
+          quad: quad,
+          targetQuad: targetQuad,
+          outputSize: layout.page,
+        ),
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(warped);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _applying = false);
+    }
   }
 
   @override
@@ -95,6 +121,13 @@ final class _CropReviewScreenState extends State<CropReviewScreen> {
     final l10n = AppLocalizations.of(context)!;
     final size = _imageSize;
     if (size == null) {
+      if (!_probeFinished) {
+        // R2: probe isolate chưa xong — hiện vòng xoay, KHÔNG hiện màn lỗi.
+        return Scaffold(
+          appBar: AppBar(title: Text(l10n.cropTitle)),
+          body: const Center(child: CircularProgressIndicator()),
+        );
+      }
       return Scaffold(
         appBar: AppBar(title: Text(l10n.cropTitle)),
         body: Center(
@@ -187,9 +220,17 @@ final class _CropReviewScreenState extends State<CropReviewScreen> {
                 child: Text(l10n.cropResetPins),
               ),
               FilledButton(
-                onPressed: _pins.length == _requiredPins ? _apply : null,
-                child: Text(
-                    l10n.cropPinsProgress(_pins.length, _requiredPins)),
+                onPressed: _pins.length == _requiredPins && !_applying
+                    ? _apply
+                    : null,
+                child: _applying
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(
+                        l10n.cropPinsProgress(_pins.length, _requiredPins)),
               ),
             ],
           ),

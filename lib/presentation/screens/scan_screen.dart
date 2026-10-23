@@ -24,7 +24,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../data/cv/scan_flow.dart' show GradedScan, processPhoto;
 import '../../data/cv/sheet_alignment.dart';
-import '../../data/cv/sheet_painter.dart' show renderMarkedSheet;
+import '../../data/cv/sheet_render_io.dart' show saveScannedImages;
 import '../../domain/entities/class_room.dart';
 import '../../domain/entities/contest.dart';
 import '../../domain/entities/graded_sheet.dart';
@@ -59,6 +59,12 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
 
   /// Đang phân tích 1 khung preview (trong isolate) — chặn chồng khung.
   bool _analyzing = false;
+
+  /// R2: thời điểm bắt đầu lần phân tích trước (throttle ≤ ~4 lần/giây).
+  DateTime? _lastAnalysisStart;
+
+  /// R2: khoảng nghỉ tối thiểu giữa hai lần phân tích khung preview.
+  static const Duration _analysisInterval = Duration(milliseconds: 250);
 
   @override
   void initState() {
@@ -159,19 +165,22 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     final stride = y.bytesPerRow;
     if (stride * (height - 1) + width > y.bytes.length) return; // khung cụt
 
-    _analyzing = true;
-    // Lấy mẫu lấy mỗi f-pixel một: đủ trông ô mốc mà isolate nhẹ.
-    final f = (width ~/ _previewTargetWidth).clamp(1, width);
-    final dw = width ~/ f;
-    final dh = height ~/ f;
-    final gray = Uint8List(dw * dh);
-    for (var dy = 0; dy < dh; dy++) {
-      final srcRow = stride * (dy * f);
-      for (var dx = 0; dx < dw; dx++) {
-        gray[dy * dw + dx] = y.bytes[srcRow + dx * f];
-      }
+    // R2: giới hạn tần suất phân tích (≤ ~4 lần/giây) — phát hiện mốc không
+    // cần 30 fps; phần khung thừa chỉ tốn pin/CPU và gây giật preview.
+    final now = DateTime.now();
+    final last = _lastAnalysisStart;
+    if (last != null &&
+        now.difference(last) < _analysisInterval) {
+      return;
     }
-    Isolate.run(() => _analyzeMarkerFrame(gray, dw, dh)).then((ready) {
+    _lastAnalysisStart = now;
+
+    _analyzing = true;
+    // R2: toàn bộ việc lấy mẫu kênh Y chạy TRONG isolate — thread UI không
+    // quét pixel nữa, chỉ gửi nguyên khung bytes (~<1 MB) đi.
+    final bytes = Uint8List.sublistView(y.bytes);
+    Isolate.run(() => _analyzeMarkerFrame(bytes, stride, width, height))
+        .then((ready) {
       _analyzing = false;
       if (!mounted || _busy) return;
       if (ready != _markersReady) {
@@ -183,9 +192,27 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     });
   }
 
-  /// Hàm top-level cho isolate: thử ảnh thu nhỏ, chưa đủ thì thử xoay 90°
+  /// Hàm top-level cho isolate (R2): lấy mẫu kênh Y về bề rộng
+  /// [_previewTargetWidth], rồi chạy detector trên ảnh thu nhỏ — chưa đủ
+  /// mốc thì thử xoay 90° (sensor preview có thể nằm ngang → không tin cậy).
+  static bool _analyzeMarkerFrame(
+      Uint8List planeBytes, int stride, int width, int height) {
+    final f = (width ~/ _previewTargetWidth).clamp(1, width);
+    final dw = width ~/ f;
+    final dh = height ~/ f;
+    final gray = Uint8List(dw * dh);
+    for (var dy = 0; dy < dh; dy++) {
+      final srcRow = stride * (dy * f);
+      for (var dx = 0; dx < dw; dx++) {
+        gray[dy * dw + dx] = planeBytes[srcRow + dx * f];
+      }
+    }
+    return _detectWithRotations(gray, dw, dh);
+  }
+
+  /// Thử ảnh thu nhỏ, chưa đủ thì thử xoay 90°
   /// (sensor preview có thể nằm ngang → tỉ lệ khung bị lệch, không tin cậy).
-  static bool _analyzeMarkerFrame(Uint8List gray, int w, int h) {
+  static bool _detectWithRotations(Uint8List gray, int w, int h) {
     const detector = SheetMarkerDetector();
     if (detector.detectGray(gray, width: w, height: h).hasAllMarkers) {
       return true;
@@ -313,7 +340,7 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   }
 
   /// Lưu ảnh (gốc đã nắn phẳng + phiếu có gạch kết quả) vào thư mục tài liệu
-  /// rồi insert hàng DB; thành công → snackbar + pop về màn trước.
+  /// trong isolate (R2) rồi insert hàng DB; thành công → snackbar + pop.
   Future<bool> _save(GradedScan graded) async {
     final contest = _contest;
     if (contest == null) return false;
@@ -323,22 +350,20 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     try {
       final scan = graded.photo.scan;
       final docsDir = await getApplicationDocumentsDirectory();
-      final dir = Directory(
-          p.join(docsDir.path, 'sheets', 'contest_${contest.id}'));
-      if (!dir.existsSync()) dir.createSync(recursive: true);
-      final ts = DateTime.now().millisecondsSinceEpoch;
-      final origPath = p.join(dir.path, 'orig_$ts.png');
-      File(origPath).writeAsBytesSync(graded.photo.warpedBytes);
       final layout =
           SheetLayout.forSpec(contest.sheetSpec, page: SheetLayout.standardPage);
-      final markedPath = p.join(dir.path, 'marked_$ts.png');
-      File(markedPath).writeAsBytesSync(renderMarkedSheet(
-        warpedGrayBytes: graded.photo.warpedBytes,
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      // R2: decode + renderMarkedSheet + ghi 2 tệp PNG chạy TRONG isolate —
+      // thread UI không bị treo ~1s+ khi bấm "Lưu kết quả".
+      final saved = await saveScannedImages(
+        warpedBytes: graded.photo.warpedBytes,
+        directoryPath: p.join(docsDir.path, 'sheets', 'contest_${contest.id}'),
+        timestamp: ts,
         layout: layout,
         correctFlags: graded.result.correctFlags,
         studentCodeRaw: scan.studentCodeRaw,
         examCodeRaw: scan.examCodeRaw,
-      ));
+      );
       final sheet = GradedSheet(
         contestId: contest.id,
         examCode: graded.usedExamCode,
@@ -349,8 +374,8 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
         keyId: graded.usedKey?.id,
         studentId: graded.student?.id,
         partScores: graded.result.partScores,
-        originalImagePath: origPath,
-        markedImagePath: markedPath,
+        originalImagePath: saved.originalPath,
+        markedImagePath: saved.markedPath,
         gradedAt: DateTime.now(),
       );
       await ref.read(gradedSheetRepositoryProvider).insert(sheet);
