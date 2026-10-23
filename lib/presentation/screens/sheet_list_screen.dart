@@ -41,7 +41,11 @@ final class SheetListScreen extends ConsumerWidget {
                       title: Text(sheet.studentCode.isEmpty
                           ? l10n.sheetTileNoCode
                           : sheet.studentCode),
-                      subtitle: Text(_scoreText(l10n, sheet.score)),
+                      // R2: phiếu bỏ chấm (mã đề '') → phụ đề "chưa có mã
+                      // đề" thay cho điểm 0 gây hiểu lầm.
+                      subtitle: Text(sheet.examCode.isEmpty
+                          ? l10n.sheetTileUnresolved
+                          : _scoreText(l10n, sheet.score)),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: id == null
                           ? null

@@ -104,6 +104,32 @@ void main() {
       final grid = DensityBlock([values]);
       expect(const OmrDecoder().decodeDigits(grid), '8');
     });
+
+    test('R2: viền in nét đều (~0,31) chỉ nhỉnh ngưỡng tuyệt đối → vẫn là ?', () {
+      // Mô phỏng đo mật độ thực tế trên ảnh scan nét của lưới TRỐNG (probe
+      // test/tmp): viền đều ~0,30–0,33 — vượt ngưỡng tuyệt đối 0,30 nhưng
+      // tỉ lệ so với trung bình chỉ ~1,2 → KHÔNG được công nhận là tô.
+      final grid = DensityBlock([
+        [0.26, 0.16, 0.31, 0.26, 0.19, 0.27, 0.31, 0.15, 0.31, 0.30],
+        [0.27, 0.16, 0.30, 0.24, 0.18, 0.26, 0.29, 0.14, 0.33, 0.28],
+        [0.26, 0.14, 0.28, 0.23, 0.17, 0.24, 0.28, 0.13, 0.31, 0.27],
+      ]);
+      expect(const OmrDecoder().decodeDigits(grid), '???');
+    });
+
+    test('R2: ô tô thật 1,0 giữa viền ~0,3 → nhận đúng chữ số', () {
+      final values = List<double>.filled(10, 0.30);
+      values[6] = 1.00;
+      final grid = DensityBlock([values]);
+      expect(const OmrDecoder().decodeDigits(grid), '6');
+    });
+
+    test('R2: tô nhạt (0,55) giữa viền 0,45 → không đủ chênh → ?', () {
+      final values = List<double>.filled(10, 0.45);
+      values[3] = 0.55;
+      final grid = DensityBlock([values]);
+      expect(const OmrDecoder().decodeDigits(grid), '?');
+    });
   });
 
   group('OmrDecoder.normalizeCode', () {

@@ -102,19 +102,35 @@ final class OmrDecoder {
   ///
   /// Mỗi hàng là một vị trí chữ số (lưới); cột được tô = giá trị chữ số. Hàng
   /// không xác định được trả về '?'.
+  ///
+  /// R2: phía ngoài ngưỡng tuyệt đối [markThreshold], cột được tô phải ĐỒNG
+  /// THỜI đạt tỉ lệ chênh:
+  ///   * ≥ [markThreshold] (mực thực sự, không phải viền mờ), và
+  ///   * ≥ 2× trung bình các cột còn lại. Viền bong bóng in nét của phiếu
+  ///     TRỐNG đo được ~0,30–0,33 và ĐỀU nhau ⇒ tỉ lệ so với trung bình chỉ
+  ///     ~1,2 (thấp hơn ngưỡng 2 ⇒ không công nhận là có tô). Ô tô thật
+  ///     (mực đậm ~1,0) luôn gấp ~3 lần viền.
+  /// Ảnh chụp thật phiếu trống (M3 demo): viền mờ < 0,30 → '?' cả hai quy tắc.
   String decodeDigits(DensityBlock grid) {
     final buffer = StringBuffer();
     for (var row = 0; row < grid.rows; row++) {
       var bestCol = -1;
       var bestDensity = -1.0;
+      var restSum = 0.0;
       for (var col = 0; col < grid.columns; col++) {
         final d = grid.at(row, col);
         if (d > bestDensity) {
+          if (bestCol >= 0) restSum += bestDensity;
           bestDensity = d;
           bestCol = col;
+        } else {
+          restSum += d;
         }
       }
-      buffer.write(bestCol < 0 || bestDensity < markThreshold ? '?' : '$bestCol');
+      final restMean = restSum / (grid.columns - 1);
+      final confident = bestDensity >= markThreshold &&
+          bestDensity >= 2 * restMean;
+      buffer.write(confident ? '$bestCol' : '?');
     }
     return buffer.toString();
   }
@@ -132,4 +148,10 @@ final class OmrDecoder {
     }
     return cleaned;
   }
+
+  /// R2: lưới có-blank HAY KHÔNG — raw chỉ toàn '?' / khoảng trắng (KHÔNG
+  /// đọc được CHỮ SỐ nào) → là "học sinh quên tô" → luồng NULL (bỏ chấm).
+  /// Dùng một phần ('?01' — đọc được 2/3 chữ số) vẫn là lỗi "không đọc
+  /// được", KHÔNG tính blank (giữ luồng cảnh báo best-key cũ).
+  static bool isBlankCode(String raw) => !raw.contains(RegExp(r'[0-9]'));
 }

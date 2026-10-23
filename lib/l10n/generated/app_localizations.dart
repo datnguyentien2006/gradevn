@@ -316,6 +316,30 @@ abstract class AppLocalizations {
   /// **'Kết quả phiếu'**
   String get resultTitle;
 
+  /// No description provided for @resultNullScore.
+  ///
+  /// In vi, this message translates to:
+  /// **'NULL'**
+  String get resultNullScore;
+
+  /// No description provided for @resultNoExamCode.
+  ///
+  /// In vi, this message translates to:
+  /// **'(Không có mã đề)'**
+  String get resultNoExamCode;
+
+  /// No description provided for @resultNoStudentCode.
+  ///
+  /// In vi, this message translates to:
+  /// **'(Không có số báo danh)'**
+  String get resultNoStudentCode;
+
+  /// No description provided for @sheetSavedUnresolved.
+  ///
+  /// In vi, this message translates to:
+  /// **'Đã lưu phiếu — cần bổ sung mã đề/số báo danh rồi chấm lại'**
+  String get sheetSavedUnresolved;
+
   /// No description provided for @resultScore.
   ///
   /// In vi, this message translates to:
@@ -405,6 +429,12 @@ abstract class AppLocalizations {
   /// In vi, this message translates to:
   /// **'Không có số báo danh'**
   String get sheetTileNoCode;
+
+  /// No description provided for @sheetTileUnresolved.
+  ///
+  /// In vi, this message translates to:
+  /// **'Chưa có mã đề — cần bổ sung'**
+  String get sheetTileUnresolved;
 
   /// No description provided for @sheetTileScore.
   ///

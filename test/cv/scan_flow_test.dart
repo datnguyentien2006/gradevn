@@ -93,7 +93,9 @@ void main() {
       candidateStudents: const <Student>[],
       chosen: photo.scan.answers,
       studentCodeRaw: photo.scan.studentCodeRaw,
-      examCodeRaw: '???', // không đọc được mã đề
+      // R2: mã đề ĐỌC MỘT PHẦN ('?01') → giữ luồng cảnh báo best-key cũ
+      // (luồng trống hoàn toàn giờ rời về NULL — test riêng).
+      examCodeRaw: '?01',
       photo: photo,
     );
 

@@ -128,6 +128,19 @@ class AppLocalizationsVi extends AppLocalizations {
   String get resultTitle => 'Kết quả phiếu';
 
   @override
+  String get resultNullScore => 'NULL';
+
+  @override
+  String get resultNoExamCode => '(Không có mã đề)';
+
+  @override
+  String get resultNoStudentCode => '(Không có số báo danh)';
+
+  @override
+  String get sheetSavedUnresolved =>
+      'Đã lưu phiếu — cần bổ sung mã đề/số báo danh rồi chấm lại';
+
+  @override
   String resultScore(String score, String max) {
     return 'Điểm: $score/$max';
   }
@@ -182,6 +195,9 @@ class AppLocalizationsVi extends AppLocalizations {
 
   @override
   String get sheetTileNoCode => 'Không có số báo danh';
+
+  @override
+  String get sheetTileUnresolved => 'Chưa có mã đề — cần bổ sung';
 
   @override
   String sheetTileScore(String score) {

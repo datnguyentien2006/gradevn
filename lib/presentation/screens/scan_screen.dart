@@ -25,7 +25,8 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../data/cv/preview_overlay.dart'
     show CoverMapping, onConfidentMarkerCount, snapSquareCenters;
-import '../../data/cv/scan_flow.dart' show GradedScan, processPhoto;
+import '../../data/cv/scan_flow.dart'
+    show GradedScan, UngradedReason, processPhoto;
 import '../../data/cv/sheet_alignment.dart';
 import '../../data/cv/sheet_render_io.dart' show saveScannedImages;
 import '../../domain/entities/class_room.dart';
@@ -524,10 +525,15 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
         studentCodeRaw: scan.studentCodeRaw,
         examCodeRaw: scan.examCodeRaw,
       );
+      // R2: phiếu bỏ chấm (NULL) → lưu mã đề '' (khi trống) / SBD ''
+      // (khi SBD trống) — dấu hiệu "chờ bổ sung"; score 0 + cờ all null.
+      final studentCode = !graded.graded && scan.studentCodeEmpty
+          ? ''
+          : scan.studentCode;
       final sheet = GradedSheet(
         contestId: contest.id,
         examCode: graded.usedExamCode,
-        studentCode: scan.studentCode,
+        studentCode: studentCode,
         chosen: graded.photo.scan.answers,
         correctFlags: graded.result.correctFlags,
         score: graded.result.score,
@@ -540,8 +546,12 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
       );
       await ref.read(gradedSheetRepositoryProvider).insert(sheet);
       messenger.showSnackBar(SnackBar(
-        content: Text(l10n.sheetSavedMessage(
-            scan.studentCode, _scoreText(graded.result.score))),
+        content: Text(
+          !graded.graded
+              ? l10n.sheetSavedUnresolved
+              : l10n.sheetSavedMessage(
+                  scan.studentCode, _scoreText(graded.result.score)),
+        ),
       ));
       navigator.pop(); // về màn trước (chi tiết kỳ thi)
       return true;
@@ -898,21 +908,42 @@ final class _ResultSheet extends StatelessWidget {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 12),
-          Text(
-            l10n.resultScore(
-                _scoreText(result.score), _scoreText(contest.maxScore)),
-            style: Theme.of(context).textTheme.headlineMedium,
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            l10n.resultStats(result.correctCount, result.incorrectCount,
-                result.unansweredCount),
-            textAlign: TextAlign.center,
-          ),
+          // R2: phiếu BỎ chấm (lưới mã đề/SBD trống) → điểm "NULL" + lý do,
+          // KHÔNG có dòng thống kê đúng/sai (không hề chấm).
+          if (!graded.graded) ...[
+            Text(
+              l10n.resultNullScore,
+              style: Theme.of(context).textTheme.headlineMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              graded.ungradedReason == UngradedReason.examCode
+                  ? l10n.resultNoExamCode
+                  : l10n.resultNoStudentCode,
+              style: Theme.of(context).textTheme.bodyMedium,
+              textAlign: TextAlign.center,
+            ),
+          ] else ...[
+            Text(
+              l10n.resultScore(
+                  _scoreText(result.score), _scoreText(contest.maxScore)),
+              style: Theme.of(context).textTheme.headlineMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              l10n.resultStats(result.correctCount, result.incorrectCount,
+                  result.unansweredCount),
+              textAlign: TextAlign.center,
+            ),
+          ],
           const SizedBox(height: 16),
-          _ResultRow(l10n.resultStudentCodeLabel, scan.studentCodeRaw),
-          _ResultRow(l10n.resultExamCodeLabel, graded.usedExamCode),
+          _ResultRow(
+              l10n.resultStudentCodeLabel,
+              scan.studentCodeEmpty ? '—' : scan.studentCodeRaw),
+          _ResultRow(l10n.resultExamCodeLabel,
+              graded.usedExamCode.isEmpty ? '—' : graded.usedExamCode),
           _ResultRow(l10n.resultStudentLabel, studentName),
           if (graded.usedBestGuessKey) ...[
             const SizedBox(height: 8),

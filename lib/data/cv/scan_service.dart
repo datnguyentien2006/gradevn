@@ -50,6 +50,12 @@ final class SheetScan {
 
   /// Mã đề đã chuẩn hoá.
   String get examCode => OmrDecoder.normalizeCode(examCodeRaw);
+
+  /// R2: lưới mã đề TRỐNG (không đọc được chữ số nào) → bỏ chấm, NULL.
+  bool get examCodeEmpty => OmrDecoder.isBlankCode(examCodeRaw);
+
+  /// R2: lưới số báo danh TRỐNG → bỏ chấm, NULL.
+  bool get studentCodeEmpty => OmrDecoder.isBlankCode(studentCodeRaw);
 }
 
 /// Kết quả quét 1 ảnh chụp thật: 4 góc khung đã phát hiện + ảnh nắn phẳng +

@@ -44,7 +44,11 @@
   "cropResetPins": "Chọn lại",
   "cropRetake": "Chụp lại",
   "resultTitle": "Kết quả phiếu",
-  "resultScore": "Điểm: {score}/{max}",
+
+  "resultNullScore": "NULL",
+  "resultNoExamCode": "(Không có mã đề)",
+  "resultNoStudentCode": "(Không có số báo danh)",
+  "sheetSavedUnresolved": "Đã lưu phiếu — cần bổ sung mã đề/số báo danh rồi chấm lại",  "resultScore": "Điểm: {score}/{max}",
   "@resultScore": {
     "placeholders": {
       "score": { "type": "String" },
@@ -90,7 +94,8 @@
 
   "sheetListTitle": "Phiếu đã chấm",
   "sheetTileNoCode": "Không có số báo danh",
-  "sheetTileScore": "{score} điểm",
+
+  "sheetTileUnresolved": "Chưa có mã đề — cần bổ sung",  "sheetTileScore": "{score} điểm",
   "@sheetTileScore": {
     "placeholders": {
       "score": { "type": "String" }

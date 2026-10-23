@@ -18,6 +18,10 @@ import 'omr_image_pipeline.dart' show OmrTuning;
 import 'sheet_alignment.dart' show AlignmentQuad;
 import 'scan_service.dart';
 
+/// R2 — Lý do phiếu bị bỏ chấm (luồng NULL): giáo viên quên tô một trong
+/// hai lưới chỉ dẫn. Mã đề ưu tiên hơn khi cả hai trống.
+enum UngradedReason { examCode, studentCode }
+
 /// Kết quả chấm một phiếu đã quét: điểm + key đã dùng + học sinh đã gắn
 /// + ảnh chụp gốc ([PhotoScan]) để lưu DB / vẽ phiếu có gạch đáp án.
 final class GradedScan {
@@ -28,6 +32,8 @@ final class GradedScan {
     required this.usedBestGuessKey,
     required this.student,
     required this.photo,
+    this.graded = true,
+    this.ungradedReason,
   });
 
   /// Kết quả chấm (cờ đúng/sai từng câu + điểm tổng + điểm từng phần).
@@ -35,6 +41,9 @@ final class GradedScan {
 
   /// Mã đề thực dùng để chấm: mã đề nằm trên key đã chọn, hoặc mã đề đọc
   /// được (đã chuẩn hoá) khi không có key.
+  ///
+  /// R2: với phiếu BỎ CHấm vì lưới mã đề trống → '' (dấu hiệu "chưa có
+  /// mã đề" khi lưu DB, giáo viên bổ sung sau).
   final String usedExamCode;
 
   /// Key được chọn: khớp mã đề trước, fallback mã đề điểm cao nhất; null
@@ -50,12 +59,23 @@ final class GradedScan {
 
   /// Kết quả quét ảnh gốc (khung + ảnh nắn phẳng PNG 1240×1754).
   final PhotoScan photo;
+
+  /// R2: false = phiếu bị BỎ CHẤM (luồng NULL) — [result] chỉ là giá trị
+  /// rỗng (tất cả cờ null, điểm 0), BAN ĐẦU cố ý KHÔNG chạy bộ chấm.
+  final bool graded;
+
+  /// R2: lý do bỏ chấm ([UngradedReason]) — non null khi [graded] == false.
+  final UngradedReason? ungradedReason;
 }
 
 /// Chấm một phiếu từ dữ liệu đã giải mã (thuần, không IO).
 ///
+/// - R2 LUỒNG NULL: mã đề HOẶC số báo danh hoàn toàn trống (không đọc được
+///   chữ số nào) → BỎ chấm ngay: trả [GradedScan.graded] = false, không
+///   chọn key, không chạy bộ chấm; UI hiện điểm "NULL" + lý do.
 /// - Chọn key: `Grader.selectKey` theo mã đề (chuẩn hoá, xoá số 0 vô nghĩa);
-///   đọc không được mã đề → `Grader.bestScoringKey` đoán theo điểm khớp cao nhất.
+///   mã đề đọc không ra (một phần, còn chữ số) → `Grader.bestScoringKey`
+///   đoán theo điểm khớp cao nhất (cảnh báo best-key giữ nguyên như M3).
 /// - Không có key nào: kết quả toàn câu null (không trừ điểm, không ném lỗi).
 /// - Gắn học sinh: chỉ tra cứu theo SBD đọc từ lưới số. OCR ([StudentInfoOcr])
 ///   KHÔNG tham gia quyết định — lưới số là nguồn tất định.
@@ -68,6 +88,46 @@ GradedScan gradeScan({
   required String examCodeRaw,
   required PhotoScan photo,
 }) {
+  final totalQuestions = contest.sheetSpec.questionCount;
+
+  // → R2: LUỒNG NULL — lưới mã đề HOẶC số báo danh hoàn toàn TRỐNG (không
+  // đọc được CHỮ SỐ nào → học sinh quên tô): BỎ CHẤM ngay, không chọn key,
+  // KHÔNG chạy bộ chấm. Điểm không tồn tại (hiển thị "NULL").
+  if (OmrDecoder.isBlankCode(examCodeRaw) ||
+      OmrDecoder.isBlankCode(studentCodeRaw)) {
+    final emptyResult = GradingResult(
+      correctFlags: List<bool?>.filled(totalQuestions, null),
+      score: 0,
+    );
+    // Cả hai trống: ưu tiên lý do mã đề (bổ sung trước khi chấm lại).
+    final reason = OmrDecoder.isBlankCode(examCodeRaw)
+        ? UngradedReason.examCode
+        : UngradedReason.studentCode;
+    // SBD đọc được vẫn gắn học sinh (không phải "chấm" — chỉ tra dữ liệu).
+    Student? student;
+    final normalizedStudent = OmrDecoder.normalizeCode(studentCodeRaw);
+    for (final candidate in candidateStudents) {
+      if (OmrDecoder.normalizeCode(candidate.code) == normalizedStudent) {
+        student = candidate;
+        break;
+      }
+    }
+    return GradedScan(
+      result: emptyResult,
+      // Mã đề trống lưu '' (chờ giáo viên bổ sung); SBD trống lưu mã đề
+      // đã đọc (đúng ràng) hoặc ''.
+      usedExamCode: reason == UngradedReason.examCode
+          ? ''
+          : OmrDecoder.normalizeCode(examCodeRaw),
+      usedKey: null,
+      usedBestGuessKey: false,
+      student: student,
+      photo: photo,
+      graded: false,
+      ungradedReason: reason,
+    );
+  }
+
   final directKey = Grader.selectKey(keys, examCodeRaw);
   final key = directKey ?? Grader.bestScoringKey(keys: keys, chosen: chosen);
 
@@ -76,7 +136,7 @@ GradedScan gradeScan({
   final usedBestGuessKey =
       directKey == null && key != null && (normalizedExam.isEmpty || normalizedExam.contains('?'));
 
-  // Không key nào: gradeForContest with dãy đáp án rỗng → mọi cờ null, điểm 0.
+  // Không key nào: gradeForContest với dãy đáp án rỗng → mọi cờ null, điểm 0.
   final result = const Grader().gradeForContest(
     contest: contest,
     keyAnswers: key?.answerSequence ?? '',
