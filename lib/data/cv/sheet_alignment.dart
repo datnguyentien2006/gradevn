@@ -20,6 +20,7 @@
 // ignore_for_file: avoid_print — chỉ dùng trong nhánh `debug` để hiệu chỉnh
 // ngưỡng phát hiện, không chạy khi chấm phiếu bình thường.
 
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' show Offset, Size;
@@ -34,6 +35,20 @@ Size? probeImageSize(Uint8List imageBytes) {
   final decoded = img.decodeImage(imageBytes);
   if (decoded == null) return null;
   return Size(decoded.width.toDouble(), decoded.height.toDouble());
+}
+
+/// R2-fix (bug demo 2026-10-23): bọc spawn isolate trong hàm TOP-LEVEL.
+///
+/// Gọi `Isolate.run` trực tiếp từ initState (hàm instance của State) khiến
+/// VM gửi KÈM chuỗi context bám cây widget — đồ thị tham chiếu chạm
+/// `InheritedElement → MediaQueryData → PlatformDispatcher →
+/// WidgetsFlutterBinding._firstFrameCompleter` (unsendable) → spawn ném
+/// "object is unsendable: _AsyncCompleter" → mọi ảnh chụp camera rơi màn
+/// "Không chọn được ảnh". Pattern đúng đã được kiểm chứng trong project:
+/// hàm top-level gửi closure chỉ capture THAM SỐ thuần dữ liệu
+/// (xem `processPhoto` — spawn thành công từ cùng luồng chụp).
+Future<Size?> probeImageSizeAsync(Uint8List imageBytes) {
+  return Isolate.run(() => probeImageSize(imageBytes));
 }
 
 /// 4 tâm mốc trên ảnh gốc: [tl, tr, br, bl] (theo kim đồng hồ).
@@ -537,6 +552,7 @@ final class PerspectiveWarper {
   /// cần đo/kiểm (dò hướng quad overlay), tránh lãng phí encode PNG.
   img.Image warpToImage(
     Uint8List imageBytes, {
+
     required AlignmentQuad quad,
     required AlignmentQuad targetQuad,
     required Size outputSize,
@@ -565,6 +581,26 @@ final class PerspectiveWarper {
     }
     return out;
   }
+}
+
+/// R2-fix (bug demo 2026-10-23): bọc spawn isolate cho nắn phẳng trong hàm
+/// TOP-LEVEL — closure chỉ capture tham số thuần dữ liệu (bytes/quad/Size),
+/// không chộp context bám cây widget như khi gọi Isolate.run trực tiếp từ
+/// hàm instance của State. Ảnh hỏng → FormatException từ [PerspectiveWarper].
+Future<Uint8List> warpRectifyAsync(
+  Uint8List imageBytes, {
+  required AlignmentQuad quad,
+  required AlignmentQuad targetQuad,
+  required Size outputSize,
+}) {
+  return Isolate.run(
+    () => const PerspectiveWarper().warpRectify(
+      imageBytes,
+      quad: quad,
+      targetQuad: targetQuad,
+      outputSize: outputSize,
+    ),
+  );
 }
 
 /// Nội suy song tuyến độ xám (lấy kênh đầu), toạ độ kẹp trong biên ảnh.

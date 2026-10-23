@@ -665,7 +665,11 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   /// detector tự tìm được. Trả về danh sách widget `Positioned`.
   List<Widget> _buildSquares() {
     // Khởi tạo vị trí mặc định tôi lần đầu build (theo tỉ lệ vùng preview).
-    _squareCenters ??= const <Offset>[
+    // CHÚ Ý R2-fix: phải là danh sách THAY ĐỔI ĐƯỢC — `const <Offset>[...]`
+    // tạo List bất biến; _moveSquare gán phần tử sẽ ném UnsupportedError
+    // (setState callback chết im lặng, ô không bao giờ di chuyển — bug demo
+    // ngày 2026-10-23: panStart/panUpdate chạy mà ô đứng yên).
+    _squareCenters ??= <Offset>[
       Offset(0.15, 0.30), // 1 — trái-trên
       Offset(0.85, 0.30), // 2 — phải-trên
       Offset(0.85, 0.70), // 3 — phải-dưới
@@ -792,7 +796,16 @@ final class _StatePill extends StatelessWidget {
             size: 18,
           ),
           const SizedBox(width: 6),
-          Text(label, style: const TextStyle(color: Colors.white)),
+          // R2-fix: chữ dài (hint kéo ô) tràn phải khi một dòng — cho phép
+          // xuống tối đa 2 dòng rồi mới cắt bớt (ellipsis).
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
         ],
       ),
     );

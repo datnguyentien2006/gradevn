@@ -6,7 +6,6 @@
 // Toạ độ ghim lưu theo pixel của ẢNH (không phải pixel màn hình) để bước warp
 // luôn khớp; vẽ overlay thì quy đổi theo tỉ lệ hiển thị (letterbox).
 
-import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -56,13 +55,22 @@ final class _CropReviewScreenState extends State<CropReviewScreen> {
     super.initState();
     // R2: decode chỉ để biết kích thước ảnh — chạy TRONG isolate (decode ảnh
     // ~12 MP trên thread UI là nguồn treo tiết kiệm nhất ở bản R1).
-    Isolate.run(() => probeImageSize(widget.imageBytes)).then((size) {
+    // R2-fix (bug demo 2026-10-23): spawn QUA hàm top-level [probeImageSizeAsync]
+    // trong sheet_alignment.dart — gọi Isolate.run trực tiếp từ initState của
+    // State gửi kèm context bám cây widget (InheritedElement/MediaQueryData/
+    // PlatformDispatcher… unsendable, đồ thị VM chạm _AsyncCompleter của
+    // WidgetsFlutterBinding) → spawn ném "object is unsendable" → mọi chụp
+    // camera rơi màn "Không chọn được ảnh". Ảnh chụp luôn là JPEG hợp lệ
+    // (đã xác minh sig FF D8 và decode trong pipeline).
+    probeImageSizeAsync(widget.imageBytes).then((size) {
       if (!mounted) return;
       setState(() {
         _imageSize = size;
         _probeFinished = true;
       });
-    }).catchError((Object _) {
+    }).catchError((Object e) {
+      // ignore: avoid_print
+      print('CropReview: probe isolate lỗi: $e'); // log chẩn đoán cho giáo viên/lập trình.
       if (!mounted) return;
       setState(() => _probeFinished = true); // UI hiện trạng thái lỗi khi null.
     });
@@ -100,13 +108,13 @@ final class _CropReviewScreenState extends State<CropReviewScreen> {
     final layout = widget.layout;
     final bytes = widget.imageBytes;
     try {
-      final warped = await Isolate.run(
-        () => const PerspectiveWarper().warpRectify(
-          bytes,
-          quad: quad,
-          targetQuad: targetQuad,
-          outputSize: layout.page,
-        ),
+      // R2-fix: spawn QUA hàm top-level [warpRectifyAsync] — tương tự probe,
+      // tránh context bám cây widget khi gọi Isolate.run từ hàm instance.
+      final warped = await warpRectifyAsync(
+        bytes,
+        quad: quad,
+        targetQuad: targetQuad,
+        outputSize: layout.page,
       );
       if (!mounted) return;
       Navigator.of(context).pop(warped);
