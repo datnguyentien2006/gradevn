@@ -559,23 +559,37 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     }
   }
 
+  /// R3: thẻ kết quả XUẤT HIỆN NGAY sau chụp (không dialog phụ): đẩy màn
+  /// toàn màn hình _ResultCardScreen; nền = ảnh chụp gốc làm mờ.
   Future<void> _showResult(GradedScan graded, {Uint8List? captureBytes}) async {
     if (!mounted) return;
     final contest = _contest;
     if (contest == null) return;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => _ResultSheet(
-        graded: graded,
-        contest: contest,
-        onSave: () async {
-          final saved = await _save(graded);
-          if (saved && sheetContext.mounted) Navigator.pop(sheetContext);
-        },
-        onScanAnother: () => Navigator.pop(sheetContext),
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => _ResultCardScreen(
+          graded: graded,
+          contest: contest,
+          backgroundImageBytes: captureBytes,
+          onSave: () async {
+            // R3: _save KHÔNG tự pop nữa — điều hướng do màn card đảm nhiệm:
+            // lưu xong pop thẻ kết quả → pop màn chấm (về chi tiết kỳ thi).
+            final ok = await _save(graded);
+            if (ok && mounted) {
+              Navigator.of(context).pop(); // pop thẻ kết quả
+              Navigator.of(context).pop(); // pop màn chấm → chi tiết kỳ thi
+            }
+          },
+          onScanAnother: () async {
+            Navigator.of(context).pop(); // pop thẻ → về camera
+          },
+        ),
       ),
     );
+    // Quay về camera sau "Chụp phiếu khác": mở lại luồng phân tích preview.
+    if (mounted && !_busy) {
+      _startMarkerOverlay();
+    }
   }
 
   /// Lưu ảnh (gốc đã nắn phẳng + phiếu có gạch kết quả) vào thư mục tài liệu
@@ -585,7 +599,6 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     if (contest == null) return false;
     final l10n = AppLocalizations.of(context)!;
     final messenger = ScaffoldMessenger.of(context);
-    final navigator = Navigator.of(context);
     try {
       final scan = graded.photo.scan;
       final docsDir = await getApplicationDocumentsDirectory();
@@ -631,7 +644,7 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
                   scan.studentCode, _scoreText(graded.result.score)),
         ),
       ));
-      navigator.pop(); // về màn trước (chi tiết kỳ thi)
+      // R3: KHÔNG pop ở đây — màn thẻ kết quả điều hướng (pop thẻ → pop chấm).
       return true;
     } catch (e) {
       messenger.showSnackBar(
@@ -1154,19 +1167,35 @@ final class _FallbackPicker extends StatelessWidget {
   }
 }
 
-/// Bottom sheet kết quả: điểm + thống kê + SBD/mã đề/học sinh + điểm phần.
-final class _ResultSheet extends StatelessWidget {
-  const _ResultSheet({
+/// R3 — THẺ KẾT QUẢ tức thời (màn nguyên màn hình, mô phỏng khung kết quả
+/// của app tham khảo — phong cách original Dart): nền = ẢNH CHỤP GỐC làm
+/// mờ tối; card trắng góc bo với tiêu đề "Kết quả phiếu", điểm TO
+/// "Điểm: x/10", dòng "N câu đúng • M sai • K bỏ trống", phần thông tin
+/// SBD/Mã đề/Học sinh; 2 nút "Lưu kết quả" (primary) và "Chụp phiếu khác"
+/// (secondary). QUY TẮC R2 giữ nguyên: card nổi HOÀN TOÀN trên thanh nav
+/// Android (SafeArea + viewPadding), NULL "NULL (Không có mã đề)" /
+/// "(Không có số báo danh)" bỏ chấm và hiển thị lý do.
+final class _ResultCardScreen extends StatefulWidget {
+  const _ResultCardScreen({
     required this.graded,
     required this.contest,
     required this.onSave,
     required this.onScanAnother,
+    this.backgroundImageBytes,
   });
 
   final GradedScan graded;
   final Contest contest;
-  final VoidCallback onSave;
+  final VoidCallback onSave; // R3: callback caller điều hướng sau khi lưu.
   final VoidCallback onScanAnother;
+  final Uint8List? backgroundImageBytes;
+
+  @override
+  State<_ResultCardScreen> createState() => _ResultCardScreenState();
+}
+
+final class _ResultCardScreenState extends State<_ResultCardScreen> {
+  bool _saving = false;
 
   String _scoreText(double score) =>
       score % 1 == 0 ? score.toStringAsFixed(0) : score.toString();
@@ -1174,85 +1203,141 @@ final class _ResultSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final graded = widget.graded;
+    final contest = widget.contest;
     final result = graded.result;
     final scan = graded.photo.scan;
     final studentName = graded.student?.fullName ?? l10n.resultStudentNotFound;
-    // R2: cộng VIEW PADDING đáy (thanh điều hướng Android) vào đệm đáy —
-    // hai nút "Lưu kết quả"/"Chụp phiếu khác" phải nổi trên thanh navigation.
+    final bgBytes = widget.backgroundImageBytes;
+    // R2: giữ nguyên quy tắc — card phải nổi trên cả viewPadding (nav bar).
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(20, 20, 20, 24 + bottomInset),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
         children: [
-          Text(
-            l10n.resultTitle,
-            style: Theme.of(context).textTheme.titleLarge,
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 12),
-          // R2: phiếu BỎ chấm (lưới mã đề/SBD trống) → điểm "NULL" + lý do,
-          // KHÔNG có dòng thống kê đúng/sai (không hề chấm).
-          if (!graded.graded) ...[
-            Text(
-              l10n.resultNullScore,
-              style: Theme.of(context).textTheme.headlineMedium,
-              textAlign: TextAlign.center,
+          // Nền: ảnh chụp gốc làm mờ (mất nét nhẹ + phủ tối 55%) — nếu không
+          // có bytes (luồng hiếm) nền xám than trơn.
+          if (bgBytes != null)
+            Opacity(
+              opacity: 0.45,
+              child: Image.memory(
+                bgBytes,
+                fit: BoxFit.cover,
+                alignment: Alignment.topCenter,
+              ),
+            )
+          else
+            ColoredBox(color: const Color(0xFF26262B)),
+          Align(
+            alignment: Alignment.center,
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(20, 24, 20, 24 + bottomInset),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: const [
+                    BoxShadow(blurRadius: 24, color: Colors.black54),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      l10n.resultTitle,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    // R2: phiếu BỎ chấm (lưới mã đề/SBD trống) → điểm "NULL"
+                    // + lý do, KHÔNG có dòng thống kê đúng/sai (chưa hề chấm).
+                    if (!graded.graded) ...[
+                      Text(
+                        l10n.resultNullScore,
+                        style: Theme.of(context)
+                            .textTheme
+                            .displaySmall
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        graded.ungradedReason == UngradedReason.examCode
+                            ? l10n.resultNoExamCode
+                            : l10n.resultNoStudentCode,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                        textAlign: TextAlign.center,
+                      ),
+                    ] else ...[
+                      Text(
+                        l10n.resultScore(
+                            _scoreText(result.score), _scoreText(contest.maxScore)),
+                        style: Theme.of(context)
+                            .textTheme
+                            .displaySmall
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        l10n.resultStats(result.correctCount,
+                            result.incorrectCount, result.unansweredCount),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    _ResultRow(
+                        l10n.resultStudentCodeLabel,
+                        scan.studentCodeEmpty ? '—' : scan.studentCodeRaw),
+                    _ResultRow(l10n.resultExamCodeLabel,
+                        graded.usedExamCode.isEmpty ? '—' : graded.usedExamCode),
+                    _ResultRow(l10n.resultStudentLabel, studentName),
+                    if (graded.usedBestGuessKey) ...[
+                      const SizedBox(height: 8),
+                      Text(l10n.resultBestGuessNote,
+                          style: Theme.of(context).textTheme.bodySmall),
+                    ],
+                    if (contest.formType == SheetFormType.ministry &&
+                        result.partScores.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(l10n.detailPartScoresTitle,
+                          style: Theme.of(context).textTheme.titleMedium),
+                      for (final entry in result.partScores.entries)
+                        Text(l10n.partScoreLine(
+                            entry.key, _scoreText(entry.value))),
+                    ],
+                    const SizedBox(height: 20),
+                    FilledButton.icon(
+                      icon: _saving
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.save_outlined),
+                      label: Text(l10n.resultSave),
+                      onPressed: _saving ? null : () {
+                        setState(() => _saving = true);
+                        widget.onSave();
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.camera_alt_outlined),
+                      label: Text(l10n.resultScanAnother),
+                      onPressed: _saving ? null : widget.onScanAnother,
+                    ),
+                  ],
+                ),
+              ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              graded.ungradedReason == UngradedReason.examCode
-                  ? l10n.resultNoExamCode
-                  : l10n.resultNoStudentCode,
-              style: Theme.of(context).textTheme.bodyMedium,
-              textAlign: TextAlign.center,
-            ),
-          ] else ...[
-            Text(
-              l10n.resultScore(
-                  _scoreText(result.score), _scoreText(contest.maxScore)),
-              style: Theme.of(context).textTheme.headlineMedium,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              l10n.resultStats(result.correctCount, result.incorrectCount,
-                  result.unansweredCount),
-              textAlign: TextAlign.center,
-            ),
-          ],
-          const SizedBox(height: 16),
-          _ResultRow(
-              l10n.resultStudentCodeLabel,
-              scan.studentCodeEmpty ? '—' : scan.studentCodeRaw),
-          _ResultRow(l10n.resultExamCodeLabel,
-              graded.usedExamCode.isEmpty ? '—' : graded.usedExamCode),
-          _ResultRow(l10n.resultStudentLabel, studentName),
-          if (graded.usedBestGuessKey) ...[
-            const SizedBox(height: 8),
-            Text(l10n.resultBestGuessNote,
-                style: Theme.of(context).textTheme.bodySmall),
-          ],
-          if (contest.formType == SheetFormType.ministry &&
-              result.partScores.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(l10n.detailPartScoresTitle,
-                style: Theme.of(context).textTheme.titleMedium),
-            for (final entry in result.partScores.entries)
-              Text(l10n.partScoreLine(entry.key, _scoreText(entry.value))),
-          ],
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            icon: const Icon(Icons.save_outlined),
-            label: Text(l10n.resultSave),
-            onPressed: onSave,
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            icon: const Icon(Icons.camera_alt_outlined),
-            label: Text(l10n.resultScanAnother),
-            onPressed: onScanAnother,
           ),
         ],
       ),
