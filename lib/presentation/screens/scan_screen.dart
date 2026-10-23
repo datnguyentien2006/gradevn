@@ -11,6 +11,7 @@
 // - Khi không có camera (Windows/test/phiên bản thiếu quyền) → hiển thị hướng
 //   dẫn + nút chọn ảnh từ tệp (file_picker): luồng chấm vẫn chạy được.
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
@@ -18,13 +19,14 @@ import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gradevn/l10n/generated/app_localizations.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../../data/cv/detection_proof.dart' show saveDetectionProof;
 import '../../data/cv/preview_overlay.dart'
     show CoverMapping, SheetProjection, snapSquareCenters, squareLockStates;
 import '../../data/cv/scan_flow.dart'
@@ -327,6 +329,11 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     _LiveFrame? build(MarkerDetection det, int fw, int fh) {
       if (det.quad == null) return null;
       if (!_portraitBox(det.quad!)) return null; // nội dung không dựng đứng
+      Offset frac(Offset p) => Offset(
+            (p.dx / fw).clamp(0.0, 1.0).toDouble(),
+            (p.dy / fh).clamp(0.0, 1.0).toDouble(),
+          );
+      final fq = det.quad!;
       return _LiveFrame(
         ready: true,
         candidates: [
@@ -336,6 +343,8 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
               (c.dy / fh).clamp(0.0, 1.0).toDouble(),
             ),
         ],
+        // R3 (chỉ DEBUG dùng): quad theo tỉ lệ khung — painter pdbg.
+        quad: AlignmentQuad(frac(fq.tl), frac(fq.tr), frac(fq.br), frac(fq.bl)),
         frameWidth: fw,
         frameHeight: fh,
       );
@@ -449,7 +458,7 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     }
   }
 
-  /// Quét + chấm ảnh (isolate): đủ mốc → bottom sheet kết quả; thiếu mốc →
+  /// Quét + chấm ảnh (isolate): đủ mốc → màn kết quả tức thời; thiếu mốc →
   /// màn ghim 4 ô vuông đen, ghim xong nắn phẳng → chạy lại pipeline.
   ///
   /// R2: \[overlayQuad\] + \[frameSize\] = quad ghim ở hệ khung hiển thị
@@ -486,10 +495,44 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     }
     if (!mounted) return;
     setState(() => _busy = false);
+    // R3 (chỉ DEBUG): lưu bằng chứng annotate qua isolate — KHÔNG chặn luồng
+    // (fire-and-forget); bản release không hề chạy nhánh này.
+    if (kDebugMode) {
+      unawaited(_saveDebugProof(
+        bytes,
+        graded?.photo.detectedCandidates,
+        graded?.photo.quad,
+      ));
+    }
     if (graded == null) {
       await _openCrop(bytes);
     } else {
-      await _showResult(graded);
+      await _showResult(graded, captureBytes: bytes);
+    }
+  }
+
+  /// R3 (chỉ DEBUG): annotate ảnh chụp + ghi vào thư mục proof của app
+  /// (adb-pull về → docs/evidence/). Lỗi nào cũng im lặng (proof không KHÔNG
+  /// được làm hỏng luồng chấm).
+  Future<void> _saveDebugProof(
+    Uint8List photoBytes,
+    List<Offset>? candidates,
+    AlignmentQuad? quad,
+  ) async {
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final proofDir = p.join(docsDir.path, 'sheets', 'proof');
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final path = await saveDetectionProof(
+        photoBytes: photoBytes,
+        directoryPath: proofDir,
+        timestamp: ts,
+        candidates: candidates,
+        quad: quad,
+      );
+      if (path != null) debugPrint('[R3] detection proof: $path');
+    } catch (e) {
+      debugPrint('[R3] proof failed: $e');
     }
   }
 
@@ -516,7 +559,7 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     }
   }
 
-  Future<void> _showResult(GradedScan graded) async {
+  Future<void> _showResult(GradedScan graded, {Uint8List? captureBytes}) async {
     if (!mounted) return;
     final contest = _contest;
     if (contest == null) return;
@@ -650,6 +693,16 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
         fit: StackFit.expand,
         children: [
           CameraPreview(camera),
+          // R3 (chỉ DEBUG): bằng chứng TRỰC QUAN trên preview — ứng viên
+          // ứng viên (chấm đỏ + nhãn) + quad (xanh lá) từ luồng phân tích khung.
+          if (kDebugMode && _liveMarkers != null)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: _DebugDetectionPainter(live: _liveMarkers!, area: _previewArea),
+                ),
+              ),
+            ),
           // R3: khung phiếu ảo — outline nét đứt giúp giáo viên canh phiếu
           // phủ đủ outline; 4 ô mốc chiếu theo khung này (dưới có IgnorePointer
           // nên không cướp cử chỉ kéo ô).
@@ -843,6 +896,84 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   }
 }
 
+/// R3 (chỉ DEBUG): vẽ KẾT QUẢ phân tích khung mới nhất lên preview —
+/// ứng viên mốc (chấm đỏ + nhãn cN) và quad 4 góc (xanh lá). Mục tiêu:
+/// chứng minh bằng mắt trên thiết bị là detector khoá đúng 4 ô vuông đen
+/// in trên phiếu, KHÔNG phải bong bóng/vật thể lân cận.
+final class _DebugDetectionPainter extends CustomPainter {
+  const _DebugDetectionPainter({required this.live, required this.area});
+
+  final _LiveFrame live;
+  final Size area;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (area == Size.zero) return;
+    final mapping = CoverMapping(frame: live.frameSize, screen: area);
+
+    void text(Offset p, String label, Color color) {
+      final tp = TextPainter(
+        text: TextSpan(
+          text: label,
+          style: TextStyle(
+            color: color,
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, p);
+    }
+
+    // Quad xanh lá.
+    final quad = live.quad;
+    if (quad != null) {
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3
+        ..color = const Color(0x9920C05A);
+      final pts = <Offset>[
+        mapping.toScreen(Offset(
+          quad.tl.dx * live.frameSize.width,
+          quad.tl.dy * live.frameSize.height,
+        )),
+        mapping.toScreen(Offset(
+          quad.tr.dx * live.frameSize.width,
+          quad.tr.dy * live.frameSize.height,
+        )),
+        mapping.toScreen(Offset(
+          quad.br.dx * live.frameSize.width,
+          quad.br.dy * live.frameSize.height,
+        )),
+        mapping.toScreen(Offset(
+          quad.bl.dx * live.frameSize.width,
+          quad.bl.dy * live.frameSize.height,
+        )),
+      ];
+      for (var i = 0; i < pts.length; i++) {
+        canvas.drawCircle(pts[i], 7, Paint()..color = const Color(0xDD1E9E44));
+        text(pts[i] + const Offset(10, 2), '${i + 1}', Colors.white);
+        final next = pts[(i + 1) % pts.length];
+        canvas.drawLine(pts[i], next, paint);
+      }
+    }
+    // Ứng viên đỏ + nhãn.
+    final dot = Paint()..color = const Color(0xDDEB4A4A);
+    for (var i = 0; i < live.candidates.length; i++) {
+      final c = live.candidates[i];
+      final p = mapping.toScreen(
+          Offset(c.dx * live.frameSize.width, c.dy * live.frameSize.height));
+      canvas.drawCircle(p, 5, dot);
+      text(p + const Offset(6, -14), 'c$i', dot.color);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DebugDetectionPainter oldDelegate) =>
+      oldDelegate.live != live || oldDelegate.area != area;
+}
+
 /// R3: khung phiếu ảo — hình chữ nhật nét đứt trắng mờ quanh outline trang
 /// chuẩn (aspect-fit), gợi ý giáo viên canh phiếu phủ đúng khung.
 final class _SheetOutlinePainter extends CustomPainter {
@@ -955,6 +1086,7 @@ final class _LiveFrame {
     required this.candidates,
     required this.frameWidth,
     required this.frameHeight,
+    this.quad,
   });
 
   /// Detector tìm đủ 4 mốc góc theo phương hướng này.
@@ -962,6 +1094,10 @@ final class _LiveFrame {
 
   /// Ứng viên (TỈ LỆ 0..1 của khung đã chọn).
   final List<Offset> candidates;
+
+  /// R3 (debug): quad 4 mốc góc theo TỈ LỆ khung đã chọn (null khi không có).
+  final AlignmentQuad? quad;
+
   final int frameWidth;
   final int frameHeight;
 

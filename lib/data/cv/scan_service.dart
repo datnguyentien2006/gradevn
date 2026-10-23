@@ -65,6 +65,8 @@ final class PhotoScan {
     required this.scan,
     required this.quad,
     required this.warpedBytes,
+    this.detectedCandidates,
+    this.verification,
   });
 
   final SheetScan scan;
@@ -72,6 +74,60 @@ final class PhotoScan {
 
   /// Ảnh đã nắn phẳng về [omrPageSize] (PNG) — dùng làm ảnh gốc khi lưu DB.
   final Uint8List warpedBytes;
+
+  /// R3: ứng viên ô vuông (px ảnh gốc) từ lần phát hiện mốc — null khi quad
+  /// không đến từ detector ([knownQuad]). Nguồn cho bằng chứng debug + thống kê.
+  final List<Offset>? detectedCandidates;
+
+  /// R3: kiểm chứng round-trip trên ảnh đã nắn (null khi [knownQuad] — người
+  /// dùng đã ghim tay, bỏ kiểm để không lặp CropReview với mốc phai).
+  final WarpedMarkerCheck? verification;
+}
+
+/// R3 — Ngưỡng kiểm chứng mốc sau nắn: px trang chuẩn (1576×2205).
+const double markerVerificationTolerancePx = 6.0;
+
+/// R3 — Kết quả kiểm chứng ROUND-TRIP (bằng chứng detector khoá đúng mốc):
+/// nắn xong chạy lại detector trên ẢNH ĐÃ NẮN rồi đo khoảng cách từng tâm
+/// mốc góc gần nhất tới vị trí chuẩn của [SheetLayout]. [passed] ✓ đòi
+/// CẢ 4 góc ≤ [tolerance] — phiếu nắn lệch/nội dung rác không thể qua được.
+final class WarpedMarkerCheck {
+  const WarpedMarkerCheck({
+    required this.offsets,
+    this.tolerance = markerVerificationTolerancePx,
+  });
+
+  /// Sai lệch (px trang chuẩn) của 4 mốc góc theo thứ tự tl, tr, br, bl —
+  /// khoảng cách từ vị trí chuẩn tới ứng viên TRÒN gần nhất trên ảnh nắn.
+  final List<double> offsets;
+
+  final double tolerance;
+
+  double get maxOffset =>
+      offsets.fold(0.0, (m, o) => o > m ? o : m);
+
+  bool get passed =>
+      offsets.length == 4 && offsets.every((o) => o <= tolerance);
+}
+
+/// Chạy kiểm chứng round-trip trên ẢNH ĐÃ NẮN (PNG trang chuẩn): decode →
+/// detect ứng viên → khoảng cách 4 góc chuẩn. Ngược quá 1 góc → [passed]=false.
+WarpedMarkerCheck verifyWarpedMarkers(
+  Uint8List warpedPngBytes, {
+  required SheetLayout layout,
+  SheetMarkerDetector detector = const SheetMarkerDetector(),
+}) {
+  final detection = detector.detect(warpedPngBytes, template: layout.template);
+  final offsets = <double>[];
+  for (final expected in layout.cornerMarkerCenters) {
+    var best = double.infinity;
+    for (final c in detection.candidates) {
+      final d = (c - expected).distance;
+      if (d < best) best = d;
+    }
+    offsets.add(best);
+  }
+  return WarpedMarkerCheck(offsets: offsets);
 }
 
 /// Ghép pipeline đo mật độ + bộ giải mã thành một bước "quét phiếu".
@@ -121,10 +177,15 @@ final class OmrScanService {
     );
 
     AlignmentQuad? quad;
+    List<Offset>? detectedCandidates;
     if (knownQuad != null) {
       quad = knownQuad;
     } else {
-      quad = detector.detect(imageBytes).quad;
+      final detection = detector.detect(imageBytes);
+      detectedCandidates = [
+        for (final c in detection.candidates) Offset(c.dx, c.dy),
+      ];
+      quad = detection.quad;
       if (quad == null && overlayQuad != null) {
         // R2: quad ghim của giáo viên là lưới an toàn khi detector bó tay:
         // phân định hướng ảnh (thẳng / xoay) rồi dùng vị trí ghim.
@@ -144,9 +205,25 @@ final class OmrScanService {
       targetQuad: targetQuad,
       outputSize: layout.page,
     );
+    // R3 — KIỂM CHỨNG ROUND-TRIP: ảnh đã nắn phải tái-detect được CẢ 4 mốc
+    // góc trong ≤ 6 px trang chuẩn. Góc nào lệch ⇒ coi như phiếu chưa căn
+    // đúng (warp rác/pin nhắm) → null → UI rơi CropReviewScreen, KHÔNG chấm
+    // một phiếu có thể sai lattice. knownQuad (ảnh đã ghim tay từ CropReview)
+    // được miễn kiểm — tránh vòng lặp với mốc phai.
+    WarpedMarkerCheck? verification;
+    if (knownQuad == null) {
+      verification = verifyWarpedMarkers(warped, layout: layout);
+      if (!verification.passed) return null;
+    }
     final scanResult = scan(warped, layout: layout, spec: spec, tuning: tuning);
     stopwatch.stop();
-    return PhotoScan(scan: scanResult, quad: quad, warpedBytes: warped);
+    return PhotoScan(
+      scan: scanResult,
+      quad: quad,
+      warpedBytes: warped,
+      detectedCandidates: detectedCandidates,
+      verification: verification,
+    );
   }
 
   /// R2 — Phân định hướng ảnh và trả về quad theo hệ PIXEL ẢNH.
