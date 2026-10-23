@@ -8,12 +8,14 @@
 
 import 'dart:isolate';
 import 'dart:typed_data';
+import 'dart:ui' show Size;
 
 import '../../domain/entities/contest.dart';
 import '../../domain/entities/class_room.dart';
 import '../../domain/services/grader.dart';
 import '../../domain/services/omr_decoder.dart';
 import 'omr_image_pipeline.dart' show OmrTuning;
+import 'sheet_alignment.dart' show AlignmentQuad;
 import 'scan_service.dart';
 
 /// Kết quả chấm một phiếu đã quét: điểm + key đã dùng + học sinh đã gắn
@@ -111,6 +113,9 @@ final class _ScanJob {
     required this.keys,
     required this.candidateStudents,
     required this.tuning,
+    this.overlayQuad,
+    this.overlayFrameSize = const Size(1, 1),
+    this.knownQuad,
   });
 
   final Uint8List bytes;
@@ -118,6 +123,13 @@ final class _ScanJob {
   final List<AnswerKey> keys;
   final List<Student> candidateStudents;
   final OmrTuning tuning;
+
+  /// R2: quad giáo viên ghim trên preview (hệ KHUNG HIỂN THỊ) + khung đó.
+  final AlignmentQuad? overlayQuad;
+  final Size overlayFrameSize;
+
+  /// R2: quad hệ ẢNH CHỤP biết chắc (ảnh đã nắn về trang chuẩn).
+  final AlignmentQuad? knownQuad;
 }
 
 /// Thân isolate: quét ảnh → chấm. Hàm top-level (isolate không gửi method).
@@ -126,6 +138,9 @@ GradedScan? _scanAndGrade(_ScanJob job) {
     job.bytes,
     spec: job.contest.sheetSpec,
     tuning: job.tuning,
+    overlayQuad: job.overlayQuad,
+    frameSize: job.overlayFrameSize,
+    knownQuad: job.knownQuad,
   );
   if (photo == null) return null; // khung căn chỉnh không tìm thấy
   return gradeScan(
@@ -142,12 +157,19 @@ GradedScan? _scanAndGrade(_ScanJob job) {
 /// Bọc isolate: quét + chấm một ảnh chụp thật ngoài thread UI.
 ///
 /// Trả về null khi không tìm thấy khung phiếu trên ảnh (gợi ý chụp lại/cắt ảnh).
+///
+/// R2: khi FE báo trước quad ghim 4 ô vuông từ preview ([overlayQuad] +
+/// [frameSize]) hoặc quad hệ ảnh chụp chắc chắn ([knownQuad]) → pipeline
+/// đổi thứ tự dự phòng như mô tả ở [OmrScanService.scanPhoto].
 Future<GradedScan?> processPhoto(
   Uint8List bytes, {
   required Contest contest,
   required List<AnswerKey> keys,
   required List<Student> candidateStudents,
   OmrTuning tuning = const OmrTuning(),
+  AlignmentQuad? overlayQuad,
+  Size frameSize = const Size(1, 1),
+  AlignmentQuad? knownQuad,
 }) {
   return Isolate.run(() {
     final job = _ScanJob(
@@ -156,6 +178,9 @@ Future<GradedScan?> processPhoto(
       keys: keys,
       candidateStudents: candidateStudents,
       tuning: tuning,
+      overlayQuad: overlayQuad,
+      overlayFrameSize: frameSize,
+      knownQuad: knownQuad,
     );
     return _scanAndGrade(job);
   });

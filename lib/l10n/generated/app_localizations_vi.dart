@@ -100,6 +100,13 @@ class AppLocalizationsVi extends AppLocalizations {
   String get scanMarkerOverlayLocated => 'Đã đủ 4 mốc';
 
   @override
+  String get scanDragHint =>
+      'Kéo 4 ô vuông cho phủ 4 ô vuông đen trên phiếu rồi chụp';
+
+  @override
+  String get scanManualFix => 'Chỉnh thủ công';
+
+  @override
   String get cropTitle => 'Ghim mốc phiếu';
 
   @override

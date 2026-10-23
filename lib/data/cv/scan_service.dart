@@ -1,5 +1,8 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
-import 'dart:ui' show Size;
+import 'dart:ui' show Offset, Size;
+
+import 'package:image/image.dart' as img;
 
 import '../../domain/entities/sheet_spec.dart';
 import '../../domain/services/omr_decoder.dart';
@@ -85,15 +88,24 @@ final class OmrScanService {
   /// Quét ảnh CHỤP THẬT (xoay/chếch/không tràn khung): phát hiện 4 ô vuông
   /// mốc → nắn phẳng về trang chuẩn → đo + giải mã. Trả về null nếu không tìm
   /// đủ 4 mốc tin cậy (UI rơi về CropReviewScreen cho người dùng ghim tay).
+  ///
+  /// R2: khi giáo viên đã GHIM 4 ô vuông trên preview ([overlayQuad] theo
+  /// hệ KhUNG HIỂN THỊ dọc + [frameSize] khung đó), pipeline dùng vị trí ghim
+  /// làm lưới an toàn: detector ưu tiên trước; detector thất bại mới thử
+  /// phân định hướng rồi warp theo vị trí ghim.
+  ///
+  /// \[knownQuad\] là quad ở HỆ ẢNH CHỤP (pixel ảnh decode) — dùng khi đã biết
+  /// chắc toạ độ (vd. ảnh đã nắn về trang chuẩn từ CropReviewScreen: quad =
+  /// 4 tâm mốc góc trang chuẩn), không dò hướng, không chạy detector.
   PhotoScan? scanPhoto(
     Uint8List imageBytes, {
     required SheetSpec spec,
     OmrTuning tuning = const OmrTuning(),
+    AlignmentQuad? overlayQuad,
+    Size frameSize = const Size(1, 1),
+    AlignmentQuad? knownQuad,
   }) {
     final stopwatch = Stopwatch()..start();
-    final detection = detector.detect(imageBytes);
-    final quad = detection.quad;
-    if (quad == null) return null;
     final layout = SheetLayout.forSpec(spec, page: omrPageSize);
     final targetQuad = AlignmentQuad(
       layout.cornerMarkerCenters[0],
@@ -101,6 +113,25 @@ final class OmrScanService {
       layout.cornerMarkerCenters[2],
       layout.cornerMarkerCenters[3],
     );
+
+    AlignmentQuad? quad;
+    if (knownQuad != null) {
+      quad = knownQuad;
+    } else {
+      quad = detector.detect(imageBytes).quad;
+      if (quad == null && overlayQuad != null) {
+        // R2: quad ghim của giáo viên là lưới an toàn khi detector bó tay:
+        // phân định hướng ảnh (thẳng / xoay) rồi dùng vị trí ghim.
+        quad = _resolveOverlayQuad(
+          imageBytes,
+          overlayQuad: overlayQuad,
+          frameSize: frameSize,
+          layout: layout,
+          targetQuad: targetQuad,
+        );
+      }
+    }
+    if (quad == null) return null;
     final warped = warper.warpRectify(
       imageBytes,
       quad: quad,
@@ -110,6 +141,155 @@ final class OmrScanService {
     final scanResult = scan(warped, layout: layout, spec: spec, tuning: tuning);
     stopwatch.stop();
     return PhotoScan(scan: scanResult, quad: quad, warpedBytes: warped);
+  }
+
+  /// R2 — Phân định hướng ảnh và trả về quad theo hệ PIXEL ẢNH.
+  ///
+  /// [overlayQuad] do giáo viên ghim theo hệ KHUNG HIỂN THỊ (dọc, đúng thứ
+  /// tự tl→tr→br→bl). Ảnh decode có thể đang nằm ngang (sensor) hoặc dọc —
+  /// chiến lược:
+  ///   1. Đọc kích thước ảnh → các biến thể hướng HỢP LỆ:
+  ///      dọc: (thẳng, xoay 180°); ngang: (xoay CW, xoay CCW).
+  ///   2. Từng biến thể: warp BẢN THU NHỎ về trang chuẩn rồi đo ĐỘ TỐI
+  ///      tại 12 mốc in sẵn — biến thể đúng → mốc tối rõ (giấy trắng).
+  ///   3. Trả quad biến thể tối nhất; không biến thể nào đạt ngưỡng
+  ///      → null (UI rơi về CropReviewScreen ghim tay).
+  AlignmentQuad? _resolveOverlayQuad(
+    Uint8List imageBytes, {
+    required AlignmentQuad overlayQuad,
+    required Size frameSize,
+    required SheetLayout layout,
+    required AlignmentQuad targetQuad,
+  }) {
+    final size = probeImageSize(imageBytes);
+    if (size == null) return null;
+    final fw = frameSize.width;
+    final fh = frameSize.height;
+    if (fw <= 0 || fh <= 0) return null;
+
+    // Tâm quad theo TỈ LỆ khung (0..1) — cùng hệ cho mọi biến thể.
+    Offset fraction(Offset p) => Offset(p.dx / fw, p.dy / fh);
+    final points = [
+      fraction(overlayQuad.tl),
+      fraction(overlayQuad.tr),
+      fraction(overlayQuad.br),
+      fraction(overlayQuad.bl),
+    ];
+
+    List<Offset> mapTo(Offset Function(Offset f) map) =>
+        [for (final p in points) map(p)];
+
+    final variants = <List<Offset>>[];
+    if (size.height >= size.width) {
+      // Ảnh decode dọc, hiển thị dọc → dò (thẳng) và (xoay 180°).
+      variants.add(mapTo((f) => Offset(f.dx * size.width, f.dy * size.height)));
+      variants.add(mapTo((f) => Offset(
+            (1 - f.dx) * size.width,
+            (1 - f.dy) * size.height,
+          )));
+    } else {
+      // Ảnh decode ngang (sensor), hiển thị dọc:
+      //  • hiển thị = xoay CW của ảnh: (a, b) → (u = b, v = 1 - a)
+      //  • hiển thị = xoay CCW của ảnh: (a, b) → (u = 1 - b, v = a)
+      //  với (a, b) là tỉ lệ khung dọc, (u, v) là tỉ lệ ảnh ngang.
+      variants.add(mapTo((f) =>
+          Offset(f.dy * size.width, (1 - f.dx) * size.height)));
+      variants.add(mapTo((f) =>
+          Offset((1 - f.dy) * size.width, f.dx * size.height)));
+    }
+
+    AlignmentQuad? best;
+    var bestScore = -1.0;
+    // targetQuad cho warp thu nhỏ phải theo TỈ LỆ output mini.
+    final sf = 320.0 / layout.page.width;
+    final shr = 450 / layout.page.height;
+    Offset scalePoint(Offset p) => Offset(p.dx * sf, p.dy * shr);
+    final targetMini = AlignmentQuad(
+      scalePoint(targetQuad.tl),
+      scalePoint(targetQuad.tr),
+      scalePoint(targetQuad.br),
+      scalePoint(targetQuad.bl),
+    );
+    for (final v in variants) {
+      final quad = AlignmentQuad(v[0], v[1], v[2], v[3]);
+      if (!_plausibleQuad(quad)) continue;
+      // Warp bản thu nhỏ (tránh encode PNG lớn) rồi đo 12 mốc.
+      final mini = const PerspectiveWarper().warpToImage(
+        imageBytes,
+        quad: quad,
+        targetQuad: targetMini,
+        outputSize: const Size(320, 450),
+      );
+      final score = _markerQuality(
+        mini,
+        layout,
+        scale: mini.width / layout.page.width,
+      );
+      if (score > bestScore) {
+        bestScore = score;
+        best = quad;
+      }
+    }
+    // Ngưỡng tin cậy: biến thể quad đúng cho LÕI 12 mốc TỐI (≥50% pixel
+    // <110) VÀ vòng ngoài mép mốc TRẮNG (lề giấy ≥ 50% pixel >190) —
+    // quad rác (đo giữa nội dung) không thể đạt đồng thời cả hai.
+    if (best == null || bestScore < _overlayQuadMinQuality) return null;
+    return best;
+  }
+
+  /// Ngưỡng chất lượng quad overlay — dưới ngưỡng coi như quad rác.
+  static const double _overlayQuadMinQuality = 0.55;
+
+  /// Quad còn "hình chữ nhật" (trải đủ 2 chiều) — chặn quad dẹt/rác.
+  bool _plausibleQuad(AlignmentQuad quad) {
+    final xs = <double>[quad.tl.dx, quad.tr.dx, quad.br.dx, quad.bl.dx];
+    final ys = <double>[quad.tl.dy, quad.tr.dy, quad.br.dy, quad.bl.dy];
+    final w = xs.reduce(math.max) - xs.reduce(math.min);
+    final h = ys.reduce(math.max) - ys.reduce(math.min);
+    return w > 1 && h > 1;
+  }
+
+  /// Chất lượng warp tại 12 vị trí mốc trên trang chuẩn (0..1):
+  /// ½·(tỉ lệ pixel TỐI <110 trong lõi mốc) + ½·(tỉ lệ TRẮNG >190 ở vòng
+  /// lề ngay ngoài mép mốc). Quad đúng: mốc đen + lề trắng cùng lúc.
+  double _markerQuality(
+    img.Image warped,
+    SheetLayout layout, {
+    required double scale,
+  }) {
+    final template = layout.template;
+    final centers = <Offset>[
+      ...layout.cornerMarkerCenters,
+      for (final m in template.extraMarkers) layout.toPage(m.x, m.y),
+    ];
+    final r = (template.markerSide * layout.scale * scale ~/ 2)
+        .clamp(1, 12)
+        .toDouble();
+    final rOuter = r * 1.9;
+    var coreDark = 0;
+    var ringWhite = 0;
+    var ringCount = 0;
+    for (final c in centers) {
+      final cx = (c.dx * scale).toInt();
+      final cy = (c.dy * scale).toInt();
+      for (var dy = -rOuter.toInt(); dy <= rOuter.toInt(); dy++) {
+        for (var dx = -rOuter.toInt(); dx <= rOuter.toInt(); dx++) {
+          final d = math.sqrt((dx * dx + dy * dy).toDouble());
+          final x = (cx + dx).clamp(0, warped.width - 1);
+          final y = (cy + dy).clamp(0, warped.height - 1);
+          final v = warped.getPixel(x, y).r.toInt();
+          if (d <= r && v < 110) coreDark++;
+          if (d >= r && d <= rOuter) {
+            if (v > 190) ringWhite++;
+            ringCount++;
+          }
+        }
+      }
+    }
+    if (ringCount == 0) return 0;
+    final coreCount = centers.length *
+        ((2 * r.toInt() + 1) * (2 * r.toInt() + 1));
+    return 0.5 * (coreDark / coreCount) + 0.5 * (ringWhite / ringCount);
   }
 
   SheetScan scan(

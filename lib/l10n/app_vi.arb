@@ -30,6 +30,8 @@
   "scanCapture": "Chụp phiếu",
   "scanProcessing": "Đang chấm phiếu…",
   "scanMarkerOverlayLocated": "Đã đủ 4 mốc",
+  "scanDragHint": "Kéo 4 ô vuông cho phủ 4 ô vuông đen trên phiếu rồi chụp",
+  "scanManualFix": "Chỉnh thủ công",
   "cropTitle": "Ghim mốc phiếu",
   "cropPickMarkers": "Ghim 4 ô vuông đen theo thứ tự: trái-trên → phải-trên → phải-dưới → trái-dưới",
   "cropPinsProgress": "Nắn phẳng ({count}/{total})",

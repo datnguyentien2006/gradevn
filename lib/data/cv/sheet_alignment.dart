@@ -532,6 +532,39 @@ final class PerspectiveWarper {
     }
     return img.encodePng(out, level: 3);
   }
+
+  /// R2: nắn phẳng trả về ẢNH XÁM (img.Image) KHÔNG encode — dùng khi chỉ
+  /// cần đo/kiểm (dò hướng quad overlay), tránh lãng phí encode PNG.
+  img.Image warpToImage(
+    Uint8List imageBytes, {
+    required AlignmentQuad quad,
+    required AlignmentQuad targetQuad,
+    required Size outputSize,
+  }) {
+    final decoded = img.decodeImage(imageBytes);
+    if (decoded == null) {
+      throw const FormatException('Không giải mã được ảnh để nắn phẳng.');
+    }
+    final w = decoded.width;
+    final h = decoded.height;
+    final channels = decoded.numChannels;
+    final bytes = decoded.getBytes();
+
+    final ow = outputSize.width.toInt();
+    final oh = outputSize.height.toInt();
+    final out = img.Image(width: ow, height: oh);
+
+    final homo = solveHomography(targetQuad.corners, quad.corners);
+
+    for (var y = 0; y < oh; y++) {
+      for (var x = 0; x < ow; x++) {
+        final src = applyHomography(homo, x.toDouble(), y.toDouble());
+        final g = _sampleGray(bytes, channels, w, h, src.dx, src.dy);
+        out.setPixelRgb(x, y, g, g, g);
+      }
+    }
+    return out;
+  }
 }
 
 /// Nội suy song tuyến độ xám (lấy kênh đầu), toạ độ kẹp trong biên ảnh.
