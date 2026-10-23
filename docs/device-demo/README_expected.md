@@ -15,7 +15,7 @@
 - **Đáp án:** tô theo key ở trên, NGOẠI TRỪ:
   - **Q3:** tô **D** (key C) → SAI
   - **Q7:** **không tô** (key C) → BỎ TRỐNG
-  - **Q10:** tô **A** (key D) → SAI
+  - **Q10:** tô **A** (key B theo `ABCD`×10) → SAI
 
 ## Kỳ vọng khi chấm
 | Số liệu | Giá trị |
