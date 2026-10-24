@@ -274,6 +274,12 @@ abstract class AppLocalizations {
   /// **'Đặt phiếu vào khung cho đủ 4 mốc đen rồi chụp'**
   String get scanDragHint;
 
+  /// No description provided for @scanManualFix.
+  ///
+  /// In vi, this message translates to:
+  /// **'Chỉnh thủ công'**
+  String get scanManualFix;
+
   /// No description provided for @cropTitle.
   ///
   /// In vi, this message translates to:

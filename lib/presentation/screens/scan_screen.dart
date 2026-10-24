@@ -1,9 +1,11 @@
-// Màn chấm phiếu bằng camera (R1→R3): preview TỰ DO; 4 ô vuông overlay là
-// PHÉP CHIẾU của 4 ô vuông đen góc phiếu theo khung phiếu ảo (aspect-fit
-// trang chuẩn) — không phải trang trí ở góc màn; chúng được đặt đúng chỗ
-// mốc CẦN nằm, kéo/snap được (R2) và tô viền xanh khi khoá lên mốc thật.
-// Nút chụp LUÔN bật; chấm trong isolate; thiếu mốc → màn ghim 4 ô vuông
-// đen (CropReviewScreen) rồi chạy lại pipeline trên ảnh đã nắn.
+// Màn chấm phiếu bằng camera (R1→R3): preview TRÀN TOÀN MÀN HÌNH (không
+// AppBar) đúng như ảnh tham chiếu obs_006.png của TN Maker; 4 ô vuông
+// TRẮNG ĐẶC là PHÉP CHIẾU của 4 ô vuông đen góc phiếu theo khung phiếu ảo
+// (aspect-fit trang chuẩn) — không phải trang trí ở góc màn; giáo viên kéo
+// ô TRẮNG đè BAO TRỌN ô đen in trên phiếu (drag/snap R2), detector bám
+// chắc thì ô KHOÁ viền xanh. Nút chụp LUÔN bật; chấm trong isolate; thiếu
+// mốc → màn ghim 4 ô vuông đen (CropReviewScreen) rồi chạy lại pipeline
+// trên ảnh đã nắn.
 //
 // Quy ước an toàn:
 // - Camera chỉ khởi tạo trên Android/iOS (Platform check) và MỌI lệnh camera
@@ -44,6 +46,11 @@ import 'crop_review_screen.dart';
 /// Bề rộng mục tiêu khi lấy mẫu luồng Y (đồng bộ [SheetMarkerDetector]).
 const int _previewTargetWidth = 640;
 
+/// R3 — Feature flag "Chỉnh thủ công": ĐANG TẮT. Nút + luồng ghim tay
+/// (CropReview) vẫn được giữ nguyên implementation (biên dịch + test xanh)
+/// dành cho phiếu MỐC PHAI về sau — bật `true` là nút hiện lại ngay.
+const bool showManualAlignment = false;
+
 final class ScanScreen extends ConsumerStatefulWidget {
   const ScanScreen({super.key, required this.contestId});
 
@@ -69,9 +76,15 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
 
   /// R2: tâm 4 ô vuông (TỈ LỆ của vùng preview). Thứ tự 1..4 =
   /// trái-trên → phải-trên → phải-dưới → trái-dưới (như ghim CropReview).
-  /// R3: ô là CHỈ BÁO hiển thị (không kéo tay nữa) — vị trí luôn bám phép
-  /// chiếu, snap theo detector; thiếu mốc khi chụp → rơi CropReview ghim tay.
+  /// R3: vị trí mặc định bám PHÉP CHIẾU mốc góc; kéo tay (R2) vẫn giữ làm
+  /// dự phòng mốc phai — ô đã kéo tắt snap, chụp thiếu mốc → CropReview.
   List<Offset>? _squareCenters;
+
+  /// R2: ô còn được snap tự động? Kéo tay xong sẽ tắt snap cho ô đó.
+  final List<bool> _autoSnap = <bool>[true, true, true, true];
+
+  /// R2: ô đang bị kéo (không snap trong khi cầm tay).
+  int? _draggingIndex;
 
   /// R2: kích thước vùng preview (đo lần build gần nhất) — cần cho quy đổi
   /// khung ↔ màn hình và tính khoảng cách snap.
@@ -98,15 +111,22 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
       markerCenters: layout.cornerMarkerCenters,
       markerSide: layout.template.markerSide * layout.scale,
       area: area,
+      // obs_006: khi phiếu phủ kín view, ô mốc bám SÁT MÉP khung (lề ~4–5%)
+      // chứ không hẹp trong giữa màn — giảm lề khung ảo từ 8% xuống 5%.
+      marginRatio: 0.05,
     );
   }
 
-  /// R3: cỡ hiển thị của ô mốc = cạnh mốc in thật × tỉ lệ khung ảo
-  /// (kẹp trong khoảng đọc được trên màn hình nhỏ).
+  /// R3: cỡ hiển thị của ô mốc = cạnh mốc in thật × tỉ lệ khung ảo; SÀN
+  /// ~12% bề rộng preview (obs_006: ô chiếm ~12% bề rộng màn hình khi phiếu
+  /// phủ khung — ô quá nhỏ khó kéo và khó "bao trọn" ô đen in trên phiếu).
   double get _markerVisualSide {
     final p = _projection();
-    if (p == null) return 56;
-    return p.projectedMarkerSide.clamp(34.0, 120.0);
+    final w = _previewArea.width;
+    if (p == null || w <= 0) return 56;
+    return p.projectedMarkerSide
+        .clamp(w * 0.12, w * 0.22)
+        .clamp(34.0, 150.0);
   }
 
   /// R3: bán kính "khoá" — tâm ô cách một ứng viên mốc ≤ 0.9 × cỡ ô hiển thị
@@ -258,8 +278,9 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     });
   }
 
-  /// R2: snap các ô vào ứng viên gần nhất (đơn vị px màn hình) — R3: ô
-  /// không kéo tay nữa nên snap LUÔN áp dụng cho tất cả các ô.
+  /// R2: snap các ô CÒN BẬT snap tự động vào ứng viên gần nhất (đơn vị px
+  /// màn hình) — bỏ qua ô đang kéo và ô đã bị phủ toạ độ tay. R3: mặc định
+  /// mọi ô bật snap (bám phép chiếu); kéo tay tắt snap đúng ô đó.
   void _snapSquares() {
     final centers = _squareCenters;
     final area = _previewArea;
@@ -279,6 +300,7 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     var changed = false;
     final next = List<Offset>.from(centers);
     for (var i = 0; i < next.length && i < snap.length; i++) {
+      if (!_autoSnap[i] || _draggingIndex == i) continue;
       final target = snap[i];
       if (target == null) continue;
       next[i] = Offset(target.dx / area.width, target.dy / area.height);
@@ -389,6 +411,32 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
         overlayQuad: overlay?.$1,
         frameSize: overlay?.$2 ?? const Size(1, 1),
       );
+    } catch (e) {
+      messenger.showSnackBar(
+          SnackBar(content: Text(l10n.scanError(e.toString()))));
+    }
+  }
+
+  /// R2: "Chỉnh thủ công" — chụp ảnh rồi mở màn GHIM MỐC (bỏ phát hiện):
+  /// đường dự phòng cho phiếu mốc phai/nhiều lỗi in.
+  /// R3: ẨN sau feature flag [showManualAlignment] (giữ implementation,
+  /// sẽ bật lại cho phiếu mốc phai — KHÔNG xoá).
+  Future<void> _captureManual() async {
+    if (_busy || _loading) return;
+    final l10n = AppLocalizations.of(context)!;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final controller = _controller;
+      if (controller == null || !controller.value.isInitialized) return;
+      try {
+        await controller.stopImageStream();
+      } catch (_) {
+        // ngừng tốt nhất có thể.
+      }
+      final file = await controller.takePicture();
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      await _openCrop(Uint8List.fromList(bytes));
     } catch (e) {
       messenger.showSnackBar(
           SnackBar(content: Text(l10n.scanError(e.toString()))));
@@ -630,36 +678,42 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    // obs_006 (TN Maker): preview camera TRÀN TOÀN MÀN HÌNH — KHÔNG AppBar;
+    // quay lại bằng nút mờ góc trái trên (dưới đây) hoặc cử chỉ hệ thống.
     return Scaffold(
-      appBar: AppBar(title: Text(l10n.scanTitle)),
+      backgroundColor: Colors.black,
+      extendBody: true,
       body: _buildBody(l10n),
     );
   }
 
   Widget _buildBody(AppLocalizations l10n) {
+    // Nền đen fullscreen (obs_006) → chữ trạng thái màu trắng cho đọc được.
+    const whiteText = TextStyle(color: Colors.white);
     if (_loading) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const CircularProgressIndicator(),
+            const CircularProgressIndicator(color: Colors.white),
             const SizedBox(height: 12),
-            Text(l10n.scanLoadingData),
+            Text(l10n.scanLoadingData, style: whiteText),
           ],
         ),
       );
     }
     if (_contest == null) {
-      return Center(child: Text(l10n.scanContestMissing));
+      return Center(
+          child: Text(l10n.scanContestMissing, style: whiteText));
     }
     if (_busy) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const CircularProgressIndicator(),
+            const CircularProgressIndicator(color: Colors.white),
             const SizedBox(height: 12),
-            Text(l10n.scanProcessing),
+            Text(l10n.scanProcessing, style: whiteText),
           ],
         ),
       );
@@ -669,10 +723,13 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     if (!cameraReady || _cameraFailed) {
       return _FallbackPicker(l10n: l10n, onPick: _pickImage);
     }
+    // obs_006: nút điều khiển phải nổi TRÊN thanh nav Android (extendBody
+    // để preview tràn xuống sau nav bar → cộng thêm padding hệ thống).
+    final safeBottom = MediaQuery.paddingOf(context).bottom;
+    final safeTop = MediaQuery.paddingOf(context).top;
     return LayoutBuilder(builder: (context, constraints) {
       // R2: kích thước vùng preview — dùng cho quy đổi khung ↔ màn hình.
       _previewArea = constraints.biggest;
-      final projection = _projection();
       return Stack(
         fit: StackFit.expand,
         children: [
@@ -687,45 +744,68 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
                 ),
               ),
             ),
-          // R3: khung phiếu ảo — outline nét đứt giúp giáo viên canh phiếu
-          // phủ đủ outline; 4 ô mốc chiếu theo khung này (dưới có IgnorePointer
-          // nên không cướp cử chỉ kéo ô).
-          if (projection != null)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: CustomPaint(
-                  painter: _SheetOutlinePainter(rect: projection.outlineRect),
-                ),
-              ),
-            ),
-          // R3: 4 ô vuông CHỈ BÁO nêu số (1..4) — bám vị trí chiếu của mốc;
-          // ô KHÓA (detector thấy mốc) viền xanh. Không kéo tay nữa (R3):
-          // thiếu mốc khi chụp → rơi CropReviewScreen ghim tay.
+          // obs_006: KHÔNG vẽ outline nét đứt — TN Maker chỉ hiển thị 4 ô
+          // vuông trắng trên preview; khung phiếu ảo vẫn tồn tại ở tầng hình
+          // học (SheetProjection) để đặt vị trí mặc định của 4 ô.
+          // R3: 4 ô vuông đánh số (1..4) — KÉO được (R2, dự phòng mốc phai);
+          // snap tự động về ứng viên mốc khi detector tự nhìn thấy. Vị trí
+          // mặc định: chiếu mốc theo khung phiếu ảo.
           ..._buildSquares(),
-          // Chỉ báo: pill xanh khi đủ 4 ô nằm trên mốc; ngược lại gợi ý đưa phiếu.
+          // Nút quay lại mờ góc trái trên (obs_006 không thấy AppBar — nút
+          // này tối giản để không phá cảnh quay).
+          Positioned(
+            left: 8,
+            top: safeTop + 8,
+            child: IconButton(
+              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+              onPressed: () => Navigator.of(context).maybePop(),
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.black38,
+                foregroundColor: Colors.white,
+              ),
+              icon: const Icon(Icons.arrow_back, size: 20),
+            ),
+          ),
+          // Chỉ báo: pill xanh khi đủ 4 ô nằm trên mốc; ngược lại gợi ý canh.
           Positioned(
             left: 12,
             right: 12,
-            bottom: 116,
+            bottom: 116 + safeBottom,
             child: Center(
               child: _StatePill(green: _allSquaresOnMarkers, label: _allSquaresOnMarkers
                   ? l10n.scanMarkerOverlayLocated
                   : l10n.scanDragHint),
             ),
           ),
+          // R3: "Chỉnh thủ công" ẨN sau feature flag (prompt R3 #4: không xoá —
+          // giữ nút + luồng ghim tay cho phiếu mốc phai, bật lại sau).
+          if (showManualAlignment)
+            Positioned(
+              left: 12,
+              bottom: 160 + safeBottom,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: Colors.black45,
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.center_focus_weak, size: 18),
+                onPressed: _captureManual,
+                label: Text(l10n.scanManualFix),
+              ),
+            ),
           Positioned(
             right: 12,
-            bottom: 148,
+            bottom: 160 + safeBottom,
             child: _PickIconButton(onPick: _pickImage, tooltip: l10n.scanPickSheetImage),
           ),
+          // obs_006/mockup camera_format.png: nút chụp = đĩa trắng tròn
+          // giữa-dưới, nổi trên thanh nav Android.
           Positioned(
-            bottom: 24,
-            right: (MediaQuery.of(context).size.width / 2) - 36,
-            child: FloatingActionButton(
-              backgroundColor: Colors.orange,
+            bottom: 20 + safeBottom,
+            left: (MediaQuery.sizeOf(context).width - 76) / 2,
+            child: _ShutterButton(
               tooltip: l10n.scanCapture,
               onPressed: _capture,
-              child: const Icon(Icons.camera_alt),
             ),
           ),
         ],
@@ -733,9 +813,10 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     });
   }
 
-  /// R3: 4 ô vuông mốc PHÉP CHIẾU — vị trí bám phép chiếu của 4 tâm mốc góc
-  /// qua khung phiếu ảo; cỡ ô theo cạnh mốc in thật × tỉ lệ khung; ô KHÓA
-  /// (detector tự tìm được) viền xanh. Trả về các widget `Positioned`.
+  /// R3: 4 ô vuông mốc PHÉP CHIẾU — vị trí mặc định = vị trí chiếu của 4
+  /// tâm mốc góc qua khung phiếu ảo (không phải 4 góc màn hình như R2);
+  /// cỡ ô theo cạnh mốc in thật × tỉ lệ khung; kéo tự do (R2), snap khi
+  /// detector tự tìm được, khoá → viền xanh. Trả về các widget `Positioned`.
   List<Widget> _buildSquares() {
     // Khởi tạo vị trí mặc định theo PHÉP CHIẾU (lần đầu build, khi đã đo
     // được vùng preview).
@@ -759,42 +840,53 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
       final c = centers[i];
       final px = Offset(c.dx * area.width, c.dy * area.height);
       final locked = i < locks.length ? locks[i] : false;
-      // R3: ô KHÓA = viền xanh đậm + nền đục vừa đủ thấy mốc bên dưới;
-      // ô thường = trắng mờ như R2. Chỉ hiển thị — không nhận sự kiện.
+      // obs_006 (TN Maker): ô TRẮNG ĐẶC, KHÔNG viền, KHÔNG bóng đổ — giáo
+      // viên kéo ô trắng đè bao trọn ô đen in trên phiếu. Ô KHÓA (detector
+      // bám chắc mốc): viền xanh + nền bớt đục để thấy mốc đã khớp bên dưới.
       final fillColor = locked
-          ? Colors.white.withValues(alpha: 0.42)
-          : Colors.white.withValues(alpha: 0.28);
+          ? Colors.white.withValues(alpha: 0.55)
+          : Colors.white.withValues(alpha: 0.92);
       final borderColor =
-          locked ? const Color(0xFF2E7D32) : Colors.white.withValues(alpha: 0.85);
+          locked ? const Color(0xFF2E7D32) : Colors.transparent;
+      // Trục hit phải rộng hơn trục vẽ (pad 12 mỗi phía) để ngón tay kéo
+      // được cả ô mốc nhỏ khi camera gần phiếu.
+      const hitPad = 12.0;
       squares.add(Positioned(
         key: ObjectKey(i),
-        left: px.dx - side / 2,
-        top: px.dy - side / 2,
-        child: IgnorePointer(
-          child: Container(
-            width: side,
-            height: side,
-            decoration: BoxDecoration(
-              color: fillColor,
-              borderRadius: BorderRadius.circular(side * 0.14),
-              border: Border.all(color: borderColor, width: 2),
-              boxShadow: const [
-                BoxShadow(blurRadius: 4, color: Colors.black38),
-              ],
-            ),
-            child: Center(
-              child: Text(
-                '${i + 1}',
-                style: TextStyle(
-                  color: locked ? const Color(0xFF1B5E20) : Colors.white,
-                  fontSize: (side * 0.34).clamp(14.0, 24.0),
-                  fontWeight: FontWeight.bold,
-                  shadows: const [
-                    Shadow(
-                        blurRadius: 4,
-                        color: Colors.black54,
-                        offset: Offset(1, 1)),
-                  ],
+        left: px.dx - side / 2 - hitPad,
+        top: px.dy - side / 2 - hitPad,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanStart: (_) => _draggingIndex = i,
+          onPanUpdate: (d) => _moveSquare(i, d.delta),
+          onPanEnd: (_) {
+            _draggingIndex = null;
+            // Kéo tay xong: tắt snap cho ô này — giữ đúng vị trí giáo viên.
+            if (_autoSnap[i]) setState(() => _autoSnap[i] = false);
+          },
+          onPanCancel: () => _draggingIndex = null,
+          child: Padding(
+            padding: const EdgeInsets.all(hitPad),
+            child: Container(
+              width: side,
+              height: side,
+              decoration: BoxDecoration(
+                color: fillColor,
+                borderRadius: BorderRadius.circular(side * 0.10),
+                border: Border.all(color: borderColor, width: locked ? 3 : 0),
+              ),
+              child: Center(
+                child: Text(
+                  // obs_006: số thứ tự RẤT NHẠT trên nền trắng (gần như mờ
+                  // đi trong ảnh chụp) — vẫn đánh số 1..4 để dẫn tay khi kéo.
+                  '${i + 1}',
+                  style: TextStyle(
+                    color: locked
+                        ? const Color(0xFF1B5E20)
+                        : Colors.black.withValues(alpha: 0.30),
+                    fontSize: (side * 0.30).clamp(12.0, 22.0),
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ),
@@ -803,6 +895,23 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
       ));
     }
     return squares;
+  }
+
+  /// R2: kéo ô vuông — cập nhật TỈ LỆ, kẹp biên (cách mép ít nhất 4%).
+  void _moveSquare(int index, Offset delta) {
+    final area = _previewArea;
+    if (area.width <= 0 || area.height <= 0) return;
+    setState(() {
+      final c = _squareCenters![index];
+      final next = Offset(
+        c.dx + delta.dx / area.width,
+        c.dy + delta.dy / area.height,
+      );
+      _squareCenters![index] = Offset(
+        next.dx.clamp(0.04, 0.96).toDouble(),
+        next.dy.clamp(0.04, 0.96).toDouble(),
+      );
+    });
   }
 
   /// R2: đủ 4 mốc? — cả 4 ô tâm nằm trong bán kính khoá của ứng viên mốc màn hình.
@@ -913,69 +1022,6 @@ final class _DebugDetectionPainter extends CustomPainter {
       oldDelegate.live != live || oldDelegate.area != area;
 }
 
-/// R3: khung phiếu ảo — hình chữ nhật nét đứt trắng mờ quanh outline trang
-/// chuẩn (aspect-fit), gợi ý giáo viên canh phiếu phủ đúng khung.
-final class _SheetOutlinePainter extends CustomPainter {
-  const _SheetOutlinePainter({required this.rect});
-
-  final Rect rect;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const dash = 10.0;
-    const gap = 8.0;
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2
-      ..color = Colors.white.withValues(alpha: 0.38);
-    // Cạnh trên + dưới: các đoạn dash ngang.
-    for (final sign in const [0.0, 1.0]) {
-      final y = sign * rect.height + rect.top;
-      for (var x = rect.left; x < rect.right; x += dash + gap) {
-        canvas.drawLine(
-          Offset(x, y),
-          Offset(math.min(x + dash, rect.right), y),
-          paint,
-        );
-      }
-    }
-    // Cạnh trái + phải: các đoạn dash dọc.
-    for (final sign in const [0.0, 1.0]) {
-      final x = sign * rect.width + rect.left;
-      for (var y = rect.top; y < rect.bottom; y += dash + gap) {
-        canvas.drawLine(
-          Offset(x, y),
-          Offset(x, math.min(y + dash, rect.bottom)),
-          paint,
-        );
-      }
-    }
-    // 4 góc emphasis (nét liền ngắn) — đúng chỗ 4 mốc góc thường khuất.
-    const corner = 22.0;
-    final cornerPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3
-      ..color = Colors.white.withValues(alpha: 0.6);
-    final corners = <Offset>[
-      rect.topLeft,
-      rect.topRight,
-      rect.bottomRight,
-      rect.bottomLeft,
-    ];
-    final dirX = <double>[1, -1, -1, 1];
-    final dirY = <double>[1, 1, -1, -1];
-    for (var i = 0; i < corners.length; i++) {
-      final c = corners[i];
-      canvas.drawLine(c, c.translate(corner * dirX[i], 0), cornerPaint);
-      canvas.drawLine(c, c.translate(0, corner * dirY[i]), cornerPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_SheetOutlinePainter oldDelegate) =>
-      oldDelegate.rect != rect;
-}
-
 /// R2: pill trạng thái overlay — xanh khi đủ 4 ô nằm trên mốc, nhạt khi
 /// đang để giáo viên kéo/thiếu mốc.
 final class _StatePill extends StatelessWidget {
@@ -1061,7 +1107,49 @@ final class _PickIconButton extends StatelessWidget {
   }
 }
 
+/// Nút chụp — đĩa TRẮNG tròn giữa-dưới (mockup camera_format.png, phong cách
+/// obs_006): vòng ngoài trắng mờ, đĩa trong trắng đặc + icon tối. GestureDetector
+/// thay FAB để kiểm soát trọn vẹn hình dạng không phụ thuộc theme.
+final class _ShutterButton extends StatelessWidget {
+  const _ShutterButton({required this.tooltip, required this.onPressed});
+
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      tooltip: tooltip,
+      child: GestureDetector(
+        onTap: onPressed,
+        child: Container(
+          width: 76,
+          height: 76,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white70, width: 3),
+            color: Colors.black26,
+          ),
+          alignment: Alignment.center,
+          child: Container(
+            width: 56,
+            height: 56,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white,
+            ),
+            alignment: Alignment.center,
+            child: const Icon(Icons.camera_alt, color: Colors.black87),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Màn dự phòng khi camera không khả dụng: hướng dẫn + chọn ảnh từ tệp.
+/// Nền màn giờ là ĐEN fullscreen (obs_006) → icon/chữ màu sáng cho đọc được.
 final class _FallbackPicker extends StatelessWidget {
   const _FallbackPicker({required this.l10n, required this.onPick});
 
@@ -1076,10 +1164,14 @@ final class _FallbackPicker extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.videocam_off_outlined,
-                size: 56, color: Theme.of(context).colorScheme.primary),
+            const Icon(Icons.videocam_off_outlined,
+                size: 56, color: Colors.white70),
             const SizedBox(height: 12),
-            Text(l10n.scanCameraUnavailable, textAlign: TextAlign.center),
+            Text(
+              l10n.scanCameraUnavailable,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white),
+            ),
             const SizedBox(height: 20),
             FilledButton.icon(
               icon: const Icon(Icons.photo_outlined),
