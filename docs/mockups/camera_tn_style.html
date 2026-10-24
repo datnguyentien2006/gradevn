@@ -1,0 +1,115 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* ============================================================
+     MOCKUP — Camera chấm phiếu GradeVN theo ĐÚNG format TNMaker
+     (dựng lại từ obs_006.png, ảnh adb bị xoay 90° → đã xoay về DỌC).
+     Tỉ lệ khung: 719 × 1616 px (điện thoại dọc thật).
+     Tất cả toạ độ px dưới đây quy đổi 1:1 từ obs_006 sau xoay.
+     ============================================================ */
+  html, body { margin: 0; padding: 0; background: #333; }
+  #phone {
+    position: relative;
+    width: 719px;   /* bề rộng dọc của obs_006 */
+    height: 1616px; /* chiều cao dọc của obs_006 */
+    overflow: hidden;
+  }
+  /* ---------- Thanh status Android (đen) — obs: dải đen trên cùng ---------- */
+  .statusbar {
+    position: absolute; left: 0; top: 0;
+    width: 719px; height: 65px;
+    background: #000;
+    z-index: 30;
+  }
+  /* ---------- Camera full-bleed ---------- */
+  .cam {
+    position: absolute; left: 0; top: 65px;
+    width: 719px; height: 1466px; /* 65 → 1531 */
+    background-color: #cac6bf;    /* khăn bàn/carô nền nhạt ấm */
+    overflow: hidden;
+  }
+  /* Texture carô: chữ nhỏ ~28px + ô lớn ~112px (đúng mật độ obs_006) */
+  .cam::before {
+    content: ""; position: absolute; inset: 0;
+    background-image:
+      repeating-linear-gradient(0deg,
+        transparent 0 26px, rgba(96, 91, 83, 0.30) 26px 28px),
+      repeating-linear-gradient(90deg,
+        transparent 0 26px, rgba(96, 91, 83, 0.30) 26px 28px),
+      repeating-linear-gradient(0deg,
+        transparent 0 110px, rgba(96, 91, 83, 0.48) 110px 114px),
+      repeating-linear-gradient(90deg,
+        transparent 0 110px, rgba(96, 91, 83, 0.48) 110px 114px);
+  }
+  /* Ánh sáng + nếp gấp vải + bẩn nhỏ góc (theo obs_006) */
+  .cam::after {
+    content: ""; position: absolute; inset: 0;
+    background-image:
+      radial-gradient(120% 70% at 50% 35%, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0) 55%),
+      radial-gradient(60% 45% at 88% 92%, rgba(50,44,38,0.30) 0%, rgba(50,44,38,0) 70%),
+      radial-gradient(45% 30% at 18% 70%, rgba(70,63,55,0.16) 0%, rgba(70,63,55,0) 70%),
+      linear-gradient(180deg, rgba(60,55,48,0.10) 0%, rgba(60,55,48,0.02) 40%, rgba(60,55,48,0.12) 100%);
+  }
+  /* Vết bẩn nhỏ dưới-trái (obs có vết mực nhòe vùng trái-dưới) */
+  .smudge {
+    position: absolute; left: 70px; top: 1280px;
+    width: 120px; height: 70px; border-radius: 50%;
+    background: radial-gradient(closest-side, rgba(80,70,60,0.35), rgba(80,70,60,0));
+    transform: rotate(-18deg);
+  }
+  /* ---------- 4 Ô VUÔNG TRẮNG phát hiện mốc — ĐÚNG VỊ TRÍ obs_006 ----------
+     Mỗi ô ~157×203 px; cột trái chạm sát mép trái (bị cắt), cột phải chạm
+     sát mép phải (bị cắt); hàng trên NGAY dưới status bar, hàng dưới cách
+     nav bar một khoảng lộ carô — phân bố KHÔNG đối xứng như ảnh thật. */
+  .sq {
+    position: absolute;
+    width: 157px; height: 203px;
+    background: #ffffff;
+    opacity: 0.96;
+    border-radius: 6px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.85), 0 3px 12px rgba(0,0,0,0.22);
+  }
+  /* Nếp gấp giấy rất nhẹ trên ô (thấy trong obs: vệt dọc mờ) */
+  .sq::before {
+    content: ""; position: absolute; inset: 0; border-radius: 6px;
+    background: repeating-linear-gradient(90deg,
+      transparent 0 46px, rgba(0,0,0,0.045) 46px 50px);
+  }
+  .sq.tl { left: 0px;    top: 1px;   }           /* hàng trên - cột trái  */
+  .sq.tr { left: 562px;  top: 1px;   }           /* hàng trên - cột phải  */
+  .sq.bl { left: 0px;    top: 910px; }           /* hàng dưới - cột trái  */
+  .sq.br { left: 562px;  top: 910px; }           /* hàng dưới - cột phải  */
+  /* ---------- Thanh nav Android (đen, 3 phím) — obs: dải đen đáy ---------- */
+  .navbar {
+    position: absolute; left: 0; top: 1531px;
+    width: 719px; height: 85px;
+    background: #000;
+    display: flex; align-items: center; justify-content: space-evenly;
+    z-index: 30;
+  }
+  .navbar svg { width: 40px; height: 40px; opacity: 0.85; }
+</style>
+</head>
+<body>
+<div id="phone" role="img" aria-label="mockup">
+  <div class="statusbar"></div>
+  <div class="cam">
+    <div class="smudge"></div>
+    <div class="sq tl"></div>
+    <div class="sq tr"></div>
+    <div class="sq bl"></div>
+    <div class="sq br"></div>
+  </div>
+  <div class="navbar">
+    <!-- Back -->
+    <svg viewBox="0 0 24 24"><path d="M18 5 L7 12 L18 19" fill="none" stroke="#e8e8e8" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>
+    <!-- Home -->
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5" fill="none" stroke="#e8e8e8" stroke-width="1.6"/></svg>
+    <!-- Recents -->
+    <svg viewBox="0 0 24 24"><rect x="4.5" y="7" width="15" height="1.7" rx="0.8" fill="#e8e8e8"/><rect x="4.5" y="11.2" width="15" height="1.7" rx="0.8" fill="#e8e8e8"/><rect x="4.5" y="15.4" width="15" height="1.7" rx="0.8" fill="#e8e8e8"/></svg>
+  </div>
+</div>
+</body>
+</html>
