@@ -210,20 +210,21 @@ void main() {
       expect(h2, closeTo(113.5, 1e-6));
     });
 
-    test('4 tâm khớp 4 khung ô đã đo (tl, tr, br, bl), đối xứng', () {
+    test('4 tâm khớp 4 khung ô đã đo (tl, tr, br, bl), đối xứng (R3.5 +16x)', () {
       final centers = portrait.centerFractions;
       expect(centers.length, 4);
-      // Tâm include-bounds: tl [0..156]×[64..266] → (78.5, 165.5).
-      expect(centers[0].dx, closeTo(78.5 / 720, 1e-6));
+      // Tâm include-bounds + R3.5 dich X: tl [0..156]×[64..266] →
+      // (78.5, 165.5) rồi dịch +16 → (94.5, 165.5).
+      expect(centers[0].dx, closeTo(94.5 / 720, 1e-6));
       expect(centers[0].dy, closeTo(165.5 / 1560, 1e-6));
-      // tr [563..719]×[64..266] → (641.5, 165.5).
-      expect(centers[1].dx, closeTo(641.5 / 720, 1e-6));
+      // tr [563..719]×[64..266] → (641.5, 165.5) rồi dịch −16 → (625.5, 165.5).
+      expect(centers[1].dx, closeTo(625.5 / 720, 1e-6));
       expect(centers[1].dy, closeTo(165.5 / 1560, 1e-6));
-      // br [563..719]×[974..1177] → (641.5, 1076.5).
-      expect(centers[2].dx, closeTo(641.5 / 720, 1e-6));
+      // br → (625.5, 1076.5).
+      expect(centers[2].dx, closeTo(625.5 / 720, 1e-6));
       expect(centers[2].dy, closeTo(1076.5 / 1560, 1e-6));
-      // bl [0..156]×[974..1177] → (78.5, 1076.5).
-      expect(centers[3].dx, closeTo(78.5 / 720, 1e-6));
+      // bl → (94.5, 1076.5).
+      expect(centers[3].dx, closeTo(94.5 / 720, 1e-6));
       expect(centers[3].dy, closeTo(1076.5 / 1560, 1e-6));
       // Cặp đối xứng trục dọc: tl/tr cùng dy, br/bl cùng dy; cặp ngang
       // cùng dx, tổng 2 tâm ngang = 1.0 (đối xứng biên).
@@ -242,9 +243,27 @@ void main() {
       // Tâm hàng dưới ×1560 + 101.5 = 1178 (biên dưới exclusive; 1177 là
       // biên.Include-bounds cuối cùng).
       expect(centers[2].dy * 1560 + 203 / 2, closeTo(1178, 1e-6));
-      // Mép trái ô = 0 (sát mép màn), mép phải ô = 720.
-      expect(centers[0].dx * 720 - 157 / 2, closeTo(0, 1e-6));
-      expect(centers[1].dx * 720 + 157 / 2, closeTo(720, 1e-6));
+      // Cột trái dịch +16 (R3.5): mép trái ô tl = 16 (tính trên cỡ ô GỐC
+      // 157 như công thức tâm; inset 24 chỉ phình khi vẽ), không còn 0.
+      expect(centers[0].dx * 720 - 157 / 2, closeTo(16, 1e-6));
+      // Cột phải dịch −16: mép phải ô tr = 720 − 16 = 704.
+      expect(centers[1].dx * 720 + 157 / 2, closeTo(704, 1e-6));
+    });
+
+    test('R3.5 — cột thu vào TRỤC X, trục Y giữ nguyên', () {
+      final centers = portrait.centerFractions;
+      // Cột trái (tl, bl): 78.5 → 94.5; cột phải (tr, br): 641.5 → 625.5.
+      expect(centers[0].dx, closeTo(94.5 / 720, 1e-6));
+      expect(centers[3].dx, closeTo(94.5 / 720, 1e-6));
+      expect(centers[1].dx, closeTo(625.5 / 720, 1e-6));
+      expect(centers[2].dx, closeTo(625.5 / 720, 1e-6));
+      // Trục Y KHÔNG ĐỔI — y hệt bảng đo gốc.
+      expect(centers[0].dy, closeTo(165.5 / 1560, 1e-6));
+      expect(centers[1].dy, closeTo(165.5 / 1560, 1e-6));
+      expect(centers[2].dy, closeTo(1076.5 / 1560, 1e-6));
+      expect(centers[3].dy, closeTo(1076.5 / 1560, 1e-6));
+      // Vẫn đối xứng: tổng 2 tâm ngang = 1.
+      expect(centers[0].dx + centers[1].dx, closeTo(1.0, 1e-6));
     });
 
     test('trong khoảng [0,1] và cỡ ô hợp lý (R3.4b inset cho phép tràn mép)', () {
@@ -273,22 +292,23 @@ void main() {
 
     test('4 tâm = transpose của bảng dọc (cùng vị trí vật lý trên màn)', () {
       final centers = landscape.centerFractions;
-      // Cột ô: 64..266 (tâm 165.5) và 974..1177 (tâm 1076.5);
-      // hàng ô: 0..156 (tâm 78.5) và 563..719 (tâm 641.5).
-      expect(centers[0].dx, closeTo(165.5 / 1560, 1e-6));
+      // Cột ô: 64..266 (tâm 165.5 + 16 R3.5 = 181.5) và
+      // 974..1177 (tâm 1076.5 − 16 = 1060.5); hàng ô: 0..156 ( tâm 78.5)
+      // và 563..719 (tâm 641.5).
+      expect(centers[0].dx, closeTo(181.5 / 1560, 1e-6));
       expect(centers[0].dy, closeTo(78.5 / 720, 1e-6));
-      expect(centers[1].dx, closeTo(1076.5 / 1560, 1e-6));
+      expect(centers[1].dx, closeTo(1060.5 / 1560, 1e-6));
       expect(centers[1].dy, closeTo(78.5 / 720, 1e-6));
-      expect(centers[2].dx, closeTo(1076.5 / 1560, 1e-6));
+      expect(centers[2].dx, closeTo(1060.5 / 1560, 1e-6));
       expect(centers[2].dy, closeTo(641.5 / 720, 1e-6));
-      expect(centers[3].dx, closeTo(165.5 / 1560, 1e-6));
+      expect(centers[3].dx, closeTo(181.5 / 1560, 1e-6));
       expect(centers[3].dy, closeTo(641.5 / 720, 1e-6));
       // Hàng trên/dưới SÁT MÉP ngang (như ảnh tham chiếu ngang), cột lệch
-      // trong đúng số px đã đo.
+      // trong đúng số px đã đo + R3.5 thu vào ±16 px.
       expect(centers[0].dy * 720 - 157 / 2, closeTo(0, 1e-6));
       expect(centers[2].dy * 720 + 157 / 2, closeTo(720, 1e-6));
-      expect(centers[0].dx * 1560 - 203 / 2, closeTo(64, 1e-6));
-      expect(centers[1].dx * 1560 + 203 / 2, closeTo(1178, 1e-6));
+      expect(centers[0].dx * 1560 - 203 / 2, closeTo(80, 1e-6));
+      expect(centers[1].dx * 1560 + 203 / 2, closeTo(1162, 1e-6));
     });
 
     test('forArea chọn đúng hướng (ngang ↔ landscape, dọc ↔ portrait)', () {

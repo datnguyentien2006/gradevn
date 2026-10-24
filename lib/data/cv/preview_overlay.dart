@@ -230,6 +230,13 @@ final class MarkerOverlayCalibration {
   /// của không gian đo tham chiếu — phóng to theo cùng tỉ lệ trên mọi máy.
   static const double sizeInsetPx = 24.0;
 
+  /// R3.5: DỊCH TÂM theo trục X (yêu cầu người dùng 2026-10-24): ô
+  /// trên-trái + dưới-trái dịch SANG PHẢI [centerShiftPx]; ô trên-phải +
+  /// dưới-phải dịch SANG TRÁI — 2 cột THU VÀO TRONG "một chút", TRỤC Y
+  /// GIỮ NGUYÊN. 16 px của không gian đo tham chiếu (720 hoặc 1560) scale
+  /// theo tỉ lệ trên mọi máy như [sizeInsetPx].
+  static const double centerShiftPx = 16.0;
+
   /// Cỡ ô theo TỈ LỆ vùng preview: width × [widthFraction],
   /// height × [heightFraction] (đã gồm inset [sizeInsetPx]).
   double get widthFraction => (boxWidthPx + sizeInsetPx) / measureWidth;
@@ -240,15 +247,17 @@ final class MarkerOverlayCalibration {
   double _fracY(double py) => py / measureHeight;
 
   /// Tâm 4 ô overlay theo TỈ LỆ vùng preview, thứ tự tl, tr, br, bl
-  /// (khi hiển thị theo hướng thật của màn). Tâm = biên trái + cỡ/2.
+  /// (khi hiển thị theo hướng thật của màn). Tâm = biên trái + cỡ/2,
+  /// rồi R3.5: cột trái +[centerShiftPx] (sang phải), cột phải
+  /// −[centerShiftPx] (sang trái); trục Y không đổi.
   List<Offset> get centerFractions => [
-        Offset(_fracX(innerLeft + boxWidthPx / 2), // tl
+        Offset(_fracX(innerLeft + boxWidthPx / 2 + centerShiftPx), // tl
             _fracY(innerTop + boxHeightPx / 2)),
-        Offset(_fracX((innerRight + 1) - boxWidthPx / 2), // tr
+        Offset(_fracX((innerRight + 1) - boxWidthPx / 2 - centerShiftPx), // tr
             _fracY(innerTop + boxHeightPx / 2)),
-        Offset(_fracX((innerRight + 1) - boxWidthPx / 2), // br
+        Offset(_fracX((innerRight + 1) - boxWidthPx / 2 - centerShiftPx), // br
             _fracY((innerBottom + 1) - boxHeightPx / 2)),
-        Offset(_fracX(innerLeft + boxWidthPx / 2), // bl
+        Offset(_fracX(innerLeft + boxWidthPx / 2 + centerShiftPx), // bl
             _fracY((innerBottom + 1) - boxHeightPx / 2)),
       ];
 }

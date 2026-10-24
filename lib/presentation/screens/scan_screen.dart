@@ -102,7 +102,8 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   /// (720×1560): ô **181×227** (bảng đo 157×203 + inset **24 px**, R3.4
   /// lượt 2 "tăng thêm nữa"; tâm KHÔNG đổi — ô phình quanh tâm cũ, phần
   /// dư tràn nhẹ ra mép như kiểu TNMaker ô sát mép), 2 cột tâm x =
-  /// 78.5 / 641.5, hàng trên tâm y = 165.5, hàng dưới tâm y = 1076.5.
+  /// 94.5 / 625.5 (R3.5 thu vào ±16 px), hàng trên tâm y = 165.5,
+  /// hàng dưới tâm y = 1076.5.
   /// Preview tràn màn bóp nhẹ (như ảnh tham chiếu, preset 16:9 để bóp ít
   /// nhất ~1.22×) nhưng bảng đo lấy TRÊN CÙNG kiểu render đó.
 
