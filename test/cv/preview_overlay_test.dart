@@ -191,19 +191,19 @@ void main() {
     });
   });
 
-  group('MarkerOverlayCalibration (đo thực địa 2026-10-24, 720×1241)', () {
-    test('cỡ ô = 157/720 × width, 203/1241 × height (khung đo thực tế)', () {
+  group('MarkerOverlayCalibration (y hệt TNMaker, toàn màn dọc 720×1560)', () {
+    test('cỡ ô = 157/720 × width, 203/1560 × height (khung đo thực tế)', () {
       expect(MarkerOverlayCalibration.widthFraction, closeTo(157 / 720, 1e-6));
-      expect(MarkerOverlayCalibration.heightFraction, closeTo(203 / 1241, 1e-6));
+      expect(MarkerOverlayCalibration.heightFraction, closeTo(203 / 1560, 1e-6));
       // Tỉ lệ độc lập với đơn vị preview:
-      // preview 720×1241 → ô đúng bằng px đo gốc.
+      // preview 720×1560 → ô đúng bằng px đo gốc.
       final w1 = MarkerOverlayCalibration.widthFraction * 720;
-      final h1 = MarkerOverlayCalibration.heightFraction * 1241;
+      final h1 = MarkerOverlayCalibration.heightFraction * 1560;
       expect(w1, closeTo(157, 1e-6));
       expect(h1, closeTo(203, 1e-6));
       // Preview khác kích thước → cùng tỉ lệ nhân lên.
       final w2 = MarkerOverlayCalibration.widthFraction * 360;
-      final h2 = MarkerOverlayCalibration.heightFraction * 620.5;
+      final h2 = MarkerOverlayCalibration.heightFraction * 780;
       expect(w2, closeTo(78.5, 1e-6));
       expect(h2, closeTo(101.5, 1e-6));
     });
@@ -213,23 +213,36 @@ void main() {
       expect(centers.length, 4);
       // Tâm include-bounds: tl [0..156]×[64..266] → (78.5, 165.5).
       expect(centers[0].dx, closeTo(78.5 / 720, 1e-6));
-      expect(centers[0].dy, closeTo(165.5 / 1241, 1e-6));
-      // tr [562..719]×[64..266] → (641.5, 165.5).
+      expect(centers[0].dy, closeTo(165.5 / 1560, 1e-6));
+      // tr [563..719]×[64..266] → (641.5, 165.5).
       expect(centers[1].dx, closeTo(641.5 / 720, 1e-6));
-      expect(centers[1].dy, closeTo(165.5 / 1241, 1e-6));
-      // br [562..719]×[975..1177] → (641.5, 1076.5).
+      expect(centers[1].dy, closeTo(165.5 / 1560, 1e-6));
+      // br [563..719]×[974..1177] → (641.5, 1076.5).
       expect(centers[2].dx, closeTo(641.5 / 720, 1e-6));
-      expect(centers[2].dy, closeTo(1076.5 / 1241, 1e-6));
-      // bl [0..156]×[975..1177] → (78.5, 1076.5).
+      expect(centers[2].dy, closeTo(1076.5 / 1560, 1e-6));
+      // bl [0..156]×[974..1177] → (78.5, 1076.5).
       expect(centers[3].dx, closeTo(78.5 / 720, 1e-6));
-      expect(centers[3].dy, closeTo(1076.5 / 1241, 1e-6));
+      expect(centers[3].dy, closeTo(1076.5 / 1560, 1e-6));
       // Cặp đối xứng trục dọc: tl/tr cùng dy, br/bl cùng dy; cặp ngang
-      // cùng dx, tổng 2 tâm ngang = 1.0 (tiệm cận đối xứng biên).
+      // cùng dx, tổng 2 tâm ngang = 1.0 (đối xứng biên).
       expect(centers[0].dy, centers[1].dy);
       expect(centers[2].dy, centers[3].dy);
       expect(centers[0].dx, centers[3].dx);
       expect(centers[1].dx, centers[2].dx);
       expect(centers[0].dx + centers[1].dx, closeTo(1.0, 1e-6));
+    });
+
+    test('lề trên 64 px & hàng dưới kết thúc 1177 (nhường dưới cho nút chụp)',
+        () {
+      final centers = MarkerOverlayCalibration.centerFractions;
+      // Tâm hàng trên ×1560 − 101.5 = 64 (biên trên ô).
+      expect(centers[0].dy * 1560 - 203 / 2, closeTo(64, 1e-6));
+      // Tâm hàng dưới ×1560 + 101.5 = 1178 (biên dưới exclusive; 1177 là
+      // biên.Include-bounds cuối cùng).
+      expect(centers[2].dy * 1560 + 203 / 2, closeTo(1178, 1e-6));
+      // Mép trái ô = 0 (sát mép màn), mép phải ô = 720.
+      expect(centers[0].dx * 720 - 157 / 2, closeTo(0, 1e-6));
+      expect(centers[1].dx * 720 + 157 / 2, closeTo(720, 1e-6));
     });
 
     test('trong khoảng [0,1] và ô không lọt lề ngoài không gian đo', () {

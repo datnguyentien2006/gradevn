@@ -133,42 +133,50 @@ List<bool> squareLockStates(
 }
 
 /// R3 — CALIBRATION THỰC ĐỊA của 4 ô overlay trên màn CAMERA (2026-10-24,
-/// giáo viên đo trực tiếp trên thiết bị ở không gian 720 × 1241 px):
+/// đối chiếu KHUNG so le với ảnh tham chiếu TNMaker đã xoay về dọc — không
+/// gian TOÀN MÀN DỌC 720 × 1560 px):
 ///
 /// | Vị trí     | x (trái→phải) | y (trên→dưới) | Kích thước |
 /// |------------|---------------|---------------|-----------:|
 /// | Trên-trái  | 0 → 156       | 64 → 266      | 157 × 203  |
-/// | Trên-phải  | 562 → 719     | 64 → 266      | 158 × 203  |
-/// | Dưới-trái  | 0 → 156       | 975 → 1177    | 157 × 203  |
-/// | Dưới-phải  | 562 → 719     | 975 → 1177    | 158 × 203  |
+/// | Trên-phải  | 563 → 719     | 64 → 266      | 157 × 203  |
+/// | Dưới-trái  | 0 → 156       | 974 → 1177    | 157 × 203  |
+/// | Dưới-phải  | 563 → 719     | 974 → 1177    | 157 × 203  |
 ///
-/// Số liệu là biên INCLUSIVE (kiểu `bounds` của UI dump: 719 = 720 − 1,
-/// 1177 = 1241 − 1); lề trên/dưới đều 64 px nên không gian dọc 1241.
+/// Biên INCLUSIVE (719 = 720 − 1, 1177 = đáy hàng dưới); lề trên 64 px =
+/// đúng cao độ thanh trạng thái (khung không bị che); lề dưới trong lòng
+/// màn 383 px chính là khoảng NHƯỜNG cho nút chụp/hint/gallery. KHUNG Ô
+/// KHÔNG CÓ SỐ (yêu cầu: y hệt TNMaker — ô chỉ là mục tiêu căn phiếu).
+///
+/// Ghi chú hướng camera: TNMaker chụp NGANG, GradeVN giữ DỌC vì phiếu
+/// GradeVN là A4 DỌC (dọc lấp đầy khung, mốc ở 4 góc trên/dưới; cảm biến vốn
+/// nằm ngang nên dọc/ngang không đổi FOV/độ phân giải). Số liệu dưới đây là
+/// hình học TRÊN MÀN DỌC (ngang TNMaker xoay 90°) để nhân bản 1-1.
+///
 /// Mọi giá trị lưu dưới dạng TỈ LỆ (0..1) của vùng preview để áp dụng cho
-/// mọi kích thước màn hình, thay cho phép chiếu aspect-fit từ template
-/// (vốn lệch so với thực địa trên thiết bị).
+/// mọi kích thước màn hình.
 final class MarkerOverlayCalibration {
   const MarkerOverlayCalibration._();
 
-  /// Không gian đo gốc (px thiết bị).
+  /// Không gian đo gốc (px thiết bị, toàn màn dọc).
   static const double measureWidth = 720;
-  static const double measureHeight = 1241;
+  static const double measureHeight = 1560;
 
-  /// Bên trong khung đo: [0, 64][719, 1177].
+  /// Vùng phủ của 4 ô: mép trái/phải SÁT MÉP (0 và 719); hàng trên bắt đầu
+  /// 64 (= status bar); hàng dưới kết thúc ở 1177 (nhường dưới cho nút chụp).
   static const double _innerLeft = 0;
   static const double _innerTop = 64;
   static const double _innerRight = 719;
   static const double _innerBottom = 1177;
 
-  /// Cỡ ô đo được (px không gian đo): 157–158 × 203 → lấy các giá trị
-  /// hợp nhất (đối xứng).
+  /// Cỡ ô đo được (px không gian đo), hợp nhất đối xứng.
   static const double _boxWidth = 157;
   static const double _boxHeight = 203;
 
   /// Cỡ ô theo tỉ lệ vùng preview: width × [widthFraction],
   /// height × [heightFraction].
   static double get widthFraction => _boxWidth / measureWidth; // ≈ 0.2181
-  static double get heightFraction => _boxHeight / measureHeight; // ≈ 0.1636
+  static double get heightFraction => _boxHeight / measureHeight; // ≈ 0.1301
 
   /// Toạ độ tâm chuẩn hoá (px không gian đo / kích thước không gian đo).
   static double _fracX(double px) => px / measureWidth;

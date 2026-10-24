@@ -91,19 +91,22 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   Size _previewArea = Size.zero;
 
   /// R3 (2026-10-24): phép chiếu phiếu ảo aspect-fit BỊ THAY bằng
-  /// CALIBRATION THỰC ĐỊA — giáo viên đo trực tiếp 4 khung mốc TRÊN MÀN
-  /// CAMERA thiết bị (không gian 720 × 1241 px, lề trên/dưới đều 64 px):
+  /// CALIBRATION THỰC ĐỊA — nhân bản y hệt khung mốc của TNMaker từ ảnh
+  /// tham chiếu (TNMaker chụp NGANG; bảng dưới là hình học TRÊN MÀN DỌC
+  /// 720 × 1560 sau khi ảnh tham chiếu được xoay về dọc — GradeVN giữ camera
+  /// dọc vì phiếu A4 dọc lấp đầy khung, FOV/độ phân giải không đổi):
   ///
   /// | Vị trí     | x (trái→phải) | y (trên→dưới) | Kích thước |
   /// |------------|---------------|---------------|-----------:|
   /// | Trên-trái  | 0 → 156       | 64 → 266      | 157 × 203  |
-  /// | Trên-phải  | 562 → 719     | 64 → 266      | 158 × 203  |
-  /// | Dưới-trái  | 0 → 156       | 975 → 1177    | 157 × 203  |
-  /// | Dưới-phải  | 562 → 719     | 975 → 1177    | 158 × 203  |
+  /// | Trên-phải  | 563 → 719     | 64 → 266      | 157 × 203  |
+  /// | Dưới-trái  | 0 → 156       | 974 → 1177    | 157 × 203  |
+  /// | Dưới-phải  | 563 → 719     | 974 → 1177    | 157 × 203  |
   ///
   /// Toàn bộ chuyển thành TỈ LỆ (0..1) của vùng preview → đúng vị trí/cỡ
   /// trên mọi màn hình; kéo tay (R2, flag `showManualAlignment`) vẫn chỉnh
-  /// được quanh vị trí mặc định này.
+  /// được quanh vị trí mặc định này. Ô KHÔNG có số bên trong (y hệt
+  /// TNMaker) — chỉ là mục tiêu căn phiếu.
 
   /// R3: kích thước khung ô overlay theo calibration (tỉ lệ preview).
   Size get _markerBoxSize {
@@ -837,16 +840,17 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
       // obs_006 (TN Maker): ô TRẮNG ĐẶC, KHÔNG viền, KHÔNG bóng đổ — giáo
       // viên kéo ô trắng đè bao trọn ô đen in trên phiếu. Ô KHÓA (detector
       // bám chắc mốc): viền xanh + nền bớt đục để thấy mốc đã khớp bên dưới.
+      // R3 (y hệt TNMaker): nền TRẮNG MỜ phẳng (~32% trên nền camera đen →
+      // hiện xám nhạt như ảnh tham chiếu), GÓC VUÔNG, KHÔNG SỐ bên trong —
+      // ô chỉ là mục tiêu căn phiếu, không phải nút nhãn.
       final fillColor = locked
           ? Colors.white.withValues(alpha: 0.55)
-          : Colors.white.withValues(alpha: 0.92);
+          : Colors.white.withValues(alpha: 0.32);
       final borderColor =
           locked ? const Color(0xFF2E7D32) : Colors.transparent;
       // Trục hit phải rộng hơn trục vẽ (pad 12 mỗi phía) để ngón tay kéo
       // được cả ô mốc nhỏ khi camera gần phiếu.
       const hitPad = 12.0;
-      final radius = box.shortestSide * 0.10;
-      final labelSize = (box.shortestSide * 0.30).clamp(12.0, 22.0);
       squares.add(Positioned(
         key: ObjectKey(i),
         left: px.dx - box.width / 2 - hitPad,
@@ -868,23 +872,11 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
               height: box.height,
               decoration: BoxDecoration(
                 color: fillColor,
-                borderRadius: BorderRadius.circular(radius),
+                borderRadius: BorderRadius.zero,
                 border: Border.all(color: borderColor, width: locked ? 3 : 0),
               ),
-              child: Center(
-                child: Text(
-                  // obs_006: số thứ tự RẤT NHẠT trên nền trắng (gần như mờ
-                  // đi trong ảnh chụp) — vẫn đánh số 1..4 để dẫn tay khi kéo.
-                  '${i + 1}',
-                  style: TextStyle(
-                    color: locked
-                        ? const Color(0xFF1B5E20)
-                        : Colors.black.withValues(alpha: 0.30),
-                    fontSize: labelSize,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
+              // R3: KHÔNG số 1..4 bên trong (y hệt TNMaker) — ô trống hoàn
+              // toàn để không che khuất ô mốc đen đặt bên dưới khi căn phiếu.
             ),
           ),
         ),
