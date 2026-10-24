@@ -31,7 +31,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../data/cv/detection_proof.dart' show saveDetectionProof;
 import '../../data/cv/preview_overlay.dart'
-    show CoverMapping, MarkerOverlayCalibration, snapSquareCenters, squareLockStates;
+    show CoverMapping, SheetProjection, snapSquareCenters, squareLockStates;
 import '../../data/cv/scan_flow.dart'
     show GradedScan, UngradedReason, processPhoto;
 import '../../data/cv/sheet_alignment.dart';
@@ -87,44 +87,45 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   /// R2: ô đang bị kéo (không snap trong khi cầm tay).
   int? _draggingIndex;
 
-  /// R2: kích thước vùng preview (đo lần build gần nhất) — cần cho quy đổi
-  /// khung ↔ màn hình và tính khoảng cách snap.
+  /// R2: kích thước vùng preview THỰC (đo lần build gần nhất) — cần cho quy
+  /// đổi khung ↔ màn hình và tính khoảng cách snap.
+  /// R3.2 (fix bóp): đây KHÔNG còn là cả màn hình nữa — là hình chữ nhật
+  /// preview đã GIỮ TỈ LỆ buffer (letterbox/contain trong màn hình), vì
+  /// preview méo là nguyên nhân hình "bóp/gầy".
   Size _previewArea = Size.zero;
 
-  /// R3 (2026-10-24): phép chiếu phiếu ảo aspect-fit BỊ THAY bằng
-  /// CALIBRATION THỰC ĐỊA — nhân bản y hệt khung mốc của TNMaker từ ảnh
-  /// tham chiếu (TNMaker chụp NGANG; bảng dưới là hình học TRÊN MÀN DỌC
-  /// 720 × 1560 sau khi ảnh tham chiếu được xoay về dọc — GradeVN giữ camera
-  /// dọc vì phiếu A4 dọc lấp đầy khung, FOV/độ phân giải không đổi):
-  ///
-  /// | Vị trí     | x (trái→phải) | y (trên→dưới) | Kích thước |
-  /// |------------|---------------|---------------|-----------:|
-  /// | Trên-trái  | 0 → 156       | 64 → 266      | 157 × 203  |
-  /// | Trên-phải  | 563 → 719     | 64 → 266      | 157 × 203  |
-  /// | Dưới-trái  | 0 → 156       | 974 → 1177    | 157 × 203  |
-  /// | Dưới-phải  | 563 → 719     | 974 → 1177    | 157 × 203  |
+  /// R3.2: góc trái-trên của vùng preview thật [_previewArea] trong màn
+  /// hình (letterbox hai mảnh đen 2 bên) — mọi widget ô vuông vượt vùng
+  /// preview cần cộng offset này.
+  Offset _previewOrigin = Offset.zero;
+
+  /// R3.2 (fix "bóp"): vị trí + cỡ ô overlay quay về PHÉP CHIẾU HÌNH HỌC
+  /// thật — preview đã giữ đúng tỉ lệ buffer, nên chiếu trang chuẩn A4 DỤNG
+  /// (aspect-fit vào vùng preview) là đúng hình học: 4 tâm ô = 4 tâm mốc
+  /// góc đã chiếu, đảm bảo ô nằm đúng chỗ mốc in trên phiếu bất kể màn
+  /// hình/máy nào. Calibration theo tỉ-lệ-màn (TNMaker) chỉ đúng cho render
+  /// TRÀN MÀN BỊ BÓP — không dùng nữa; giữ trong `preview_overlay.dart`
+  /// làm ghi chú tham chiếu.
   ///
   /// Toàn bộ chuyển thành TỈ LỆ (0..1) của vùng preview → đúng vị trí/cỡ
   /// trên mọi màn hình; kéo tay (R2, flag `showManualAlignment`) vẫn chỉnh
   /// được quanh vị trí mặc định này. Ô KHÔNG có số bên trong (y hệt
   /// TNMaker) — chỉ là mục tiêu căn phiếu.
 
-  /// R3: kích thước khung ô overlay theo calibration HƯỚNG-THỨC
-  /// ([MarkerOverlayCalibration.forArea]) — tự dùng bản ngang khi màn ngang.
+  /// R3.2: kích thước khung ô overlay — ô VUÔNG vì giấy + mốc in là ô
+  /// vuông dưới preview giữ đúng tỉ lệ; cỡ = 22% cạnh ngắn vùng preview
+  /// (sàn 96 px để ngón tay nhích/kéo được) — cỡ "vùng ngắm" quanh mốc,
+  /// lớn hơn mốc in thật vài lần cho dễ căn nhưng tâm vẫn là mốc.
   Size get _markerBoxSize {
     final area = _previewArea;
     if (area.width <= 0 || area.height <= 0) {
-      return const Size(60, 78);
+      return const Size(96, 96);
     }
-    final cal = MarkerOverlayCalibration.forArea(area);
-    return Size(
-      cal.widthFraction * area.width,
-      cal.heightFraction * area.height,
-    );
+    final side = math.max(96.0, area.shortestSide * 0.22);
+    return Size(side, side);
   }
 
-  /// R3: cỡ ô "tương đương" = cạnh dài khung ô calibrated (dùng cho bán kính
-  /// khoá và cỡ chữ): ô 157×203 không đều hai cạnh nên lấy cạnh lớn.
+  /// R3: cỡ ô "tương đương" = cạnh ô vuông (dùng cho bán kính khoá + cỡ chữ).
   double get _markerVisualSide => math.max(
         _markerBoxSize.width,
         _markerBoxSize.height,
@@ -757,19 +758,56 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     final safeBottom = MediaQuery.paddingOf(context).bottom;
     final safeTop = MediaQuery.paddingOf(context).top;
     return LayoutBuilder(builder: (context, constraints) {
-      // R2: kích thước vùng preview — dùng cho quy đổi khung ↔ màn hình.
-      _previewArea = constraints.biggest;
+      // R3.2 (fix "bóp"): tỉ lệ pixel THẬT của texture preview — lấy từ
+      // previewSize của plugin (buffer của UseCase Preview, hệ toạ độ
+      // sensor: chiều dài/chiều ngắn). CameraPreview (widget plugin) tự bọc
+      // AspectRatio theo HƯỚNG CẢM BIẾN (controller.value.deviceOrientation)
+      // — khi màn bị KHOÁ NGANG bằng SystemChrome mà máy cầm dọc thì tín
+      // hiệu cảm biến vẫn "dọc" → plugin áp 1/ratio (hộp dọc) trên màn
+      // ngang → texture bị ép ngược chiều = hình "bóp/gầy". Ta tự tính theo
+      // HỘP THẬT của màn (luôn ngang do khoá hướng) và bỏ CameraPreview,
+      // chỉ dùng `camera.buildPreview()` (Texture + bộ xoay chuẩn plugin).
+      final rawRatio = camera.value.aspectRatio;
+      final previewAspect = math.max(rawRatio, 1 / rawRatio);
+      // Vùng preview = contain-fit của buffer trong màn — không méo, hai
+      // mảnh đen 2 bên; mọi toạ độ ô overlay đều quy về vùng này.
+      final area = constraints.biggest;
+      final fittedW = math.min(
+        area.width,
+        area.height * previewAspect,
+      );
+      final fittedH = math.min(
+        area.height,
+        area.width / previewAspect,
+      );
+      _previewArea = Size(fittedW, fittedH);
+      _previewOrigin = Offset(
+        (area.width - fittedW) / 2,
+        (area.height - fittedH) / 2,
+      );
       return Stack(
         fit: StackFit.expand,
         children: [
-          CameraPreview(camera),
+          // Nền đen vùng letterbox (Scaffold cũng đen nhưng tường minh).
+          const ColoredBox(color: Colors.black),
+          // Preview giữ đúng tỉ lệ buffer (letterbox) — KHÔNG méo.
+          Center(
+            child: AspectRatio(
+              aspectRatio: previewAspect,
+              child: camera.buildPreview(),
+            ),
+          ),
           // R3 (chỉ DEBUG): bằng chứng TRỰC QUAN trên preview — ứng viên
           // ứng viên (chấm đỏ + nhãn) + quad (xanh lá) từ luồng phân tích khung.
           if (kDebugMode && _liveMarkers != null)
             Positioned.fill(
               child: IgnorePointer(
                 child: CustomPaint(
-                  painter: _DebugDetectionPainter(live: _liveMarkers!, area: _previewArea),
+                  painter: _DebugDetectionPainter(
+                    live: _liveMarkers!,
+                    area: _previewArea,
+                    origin: _previewOrigin,
+                  ),
                 ),
               ),
             ),
@@ -844,18 +882,31 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
 
   /// R3: 4 ô vuông mốc PHÉP CHIẾU — vị trí mặc định = vị trí chiếu của 4
   /// tâm mốc góc qua khung phiếu ảo (không phải 4 góc màn hình như R2);
-  /// cỡ ô theo cạnh mốc in thật × tỉ lệ khung; kéo tự do (R2), snap khi
-  /// detector tự tìm được, khoá → viền xanh. Trả về các widget `Positioned`.
+  /// cỡ ô theo "vùng ngắm" vuông (R3.2,-preview không méo); kéo tự do
+  /// (R2), snap khi detector tự tìm được, khoá → viền xanh.
   List<Widget> _buildSquares() {
-    // R3 (2026-10-24): vị trí mặc định theo CALIBRATION THỰC ĐỊA
-    // ([MarkerOverlayCalibration.centerFractions]) thay cho phép chiếu
-    // aspect-fit. Danh sách THAY ĐỔI ĐƯỢC (không `const`) — R2-fix giữ nguyên:
-    // _moveSquare gán phần tử (bug demo 2026-10-23: `const <Offset>[...]`
-    // làm ô đứng im vì UnsupportedError bị nuốt trong setState).
+    // R3.2 (fix "bóp"): vị trí mặc định quay về PHÉP CHIẾU aspect-fit trang
+    // chuẩn vào vùng preview GIỮ TỈ LỆ (preview thiểu méo → aspect-fit khớp
+    // hình học thật; calibration theo %-màn chỉ đúng cho render tràn màn bị
+    // bóp → bỏ). Danh sách THAY ĐỔI ĐƯỢC (không `const`) — R2-fix:
+    // _moveSquare gán phần tử (bug demo 2026-10-23).
+    final contest = _contest;
     final area = _previewArea;
-    if (_squareCenters == null && area.width > 0) {
+    if (_squareCenters == null && area.width > 0 && contest != null) {
+      final layout = SheetLayout.forSpec(
+        contest.sheetSpec,
+        page: SheetLayout.standardPage,
+      );
+      final projection = SheetProjection(
+        pageSize: layout.page,
+        markerCenters: layout.cornerMarkerCenters,
+        markerSide: layout.template.markerSide,
+        area: area,
+        marginRatio: 0.04,
+      );
       _squareCenters = <Offset>[
-        ...MarkerOverlayCalibration.forArea(area).centerFractions,
+        for (final m in projection.projectedMarkerCenters)
+          Offset(m.dx / area.width, m.dy / area.height),
       ];
     }
     final centers = _squareCenters;
@@ -865,14 +916,15 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     final squares = <Widget>[];
     for (var i = 0; i < 4 && i < centers.length; i++) {
       final c = centers[i];
-      final px = Offset(c.dx * area.width, c.dy * area.height);
-      final locked = i < locks.length ? locks[i] : false;
+      final px =
+          _previewOrigin + Offset(c.dx * area.width, c.dy * area.height);
       // obs_006 (TN Maker): ô TRẮNG ĐẶC, KHÔNG viền, KHÔNG bóng đổ — giáo
       // viên kéo ô trắng đè bao trọn ô đen in trên phiếu. Ô KHÓA (detector
       // bám chắc mốc): viền xanh + nền bớt đục để thấy mốc đã khớp bên dưới.
       // R3 (y hệt TNMaker): nền TRẮNG MỜ phẳng (~32% trên nền camera đen →
       // hiện xám nhạt như ảnh tham chiếu), GÓC VUÔNG, KHÔNG SỐ bên trong —
       // ô chỉ là mục tiêu căn phiếu, không phải nút nhãn.
+      final locked = i < locks.length ? locks[i] : false;
       final fillColor = locked
           ? Colors.white.withValues(alpha: 0.55)
           : Colors.white.withValues(alpha: 0.32);
@@ -967,10 +1019,18 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
 /// chứng minh bằng mắt trên thiết bị là detector khoá đúng 4 ô vuông đen
 /// in trên phiếu, KHÔNG phải bong bóng/vật thể lân cận.
 final class _DebugDetectionPainter extends CustomPainter {
-  const _DebugDetectionPainter({required this.live, required this.area});
+  const _DebugDetectionPainter({
+    required this.live,
+    required this.area,
+    required this.origin,
+  });
 
   final _LiveFrame live;
   final Size area;
+
+  /// R3.2: góc vùng preview trong canvas — điểm quy đổi từ khung camera
+  /// là toạ độ TRONG vùng preview; vẽ lên canvas toàn màn cần cộng gốc.
+  final Offset origin;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -989,7 +1049,7 @@ final class _DebugDetectionPainter extends CustomPainter {
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      tp.paint(canvas, p);
+      tp.paint(canvas, p + origin);
     }
 
     // Quad xanh lá.
@@ -1000,18 +1060,21 @@ final class _DebugDetectionPainter extends CustomPainter {
         ..strokeWidth = 3
         ..color = const Color(0x9920C05A);
       final pts = <Offset>[
-        mapping.toScreen(Offset(
-          quad.tl.dx * live.frameSize.width,
-          quad.tl.dy * live.frameSize.height,
-        )),
-        mapping.toScreen(Offset(
-          quad.tr.dx * live.frameSize.width,
-          quad.tr.dy * live.frameSize.height,
-        )),
-        mapping.toScreen(Offset(
-          quad.br.dx * live.frameSize.width,
-          quad.br.dy * live.frameSize.height,
-        )),
+        origin +
+            mapping.toScreen(Offset(
+              quad.tl.dx * live.frameSize.width,
+              quad.tl.dy * live.frameSize.height,
+            )),
+        origin +
+            mapping.toScreen(Offset(
+              quad.tr.dx * live.frameSize.width,
+              quad.tr.dy * live.frameSize.height,
+            )),
+        origin +
+            mapping.toScreen(Offset(
+              quad.br.dx * live.frameSize.width,
+              quad.br.dy * live.frameSize.height,
+            )),
         mapping.toScreen(Offset(
           quad.bl.dx * live.frameSize.width,
           quad.bl.dy * live.frameSize.height,
