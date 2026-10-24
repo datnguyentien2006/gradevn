@@ -191,22 +191,23 @@ void main() {
     });
   });
 
-  group('MarkerOverlayCalibration (y hệt TNMaker, toàn màn dọc 720×1560)', () {
+  group('MarkerOverlayCalibration (màn dọc 720×1560; R3.4 +6 px cỡ ô)', () {
     final portrait = MarkerOverlayCalibration.portrait;
-    test('cỡ ô = 157/720 × width, 203/1560 × height (khung đo thực tế)', () {
-      expect(portrait.widthFraction, closeTo(157 / 720, 1e-6));
-      expect(portrait.heightFraction, closeTo(203 / 1560, 1e-6));
+    test('cỡ ô = (157+6)/720 × width, (203+6)/1560 × height (tâm giữ nguyên)',
+        () {
+      expect(portrait.widthFraction, closeTo(163 / 720, 1e-6));
+      expect(portrait.heightFraction, closeTo(209 / 1560, 1e-6));
       // Tỉ lệ độc lập với đơn vị preview:
-      // preview 720×1560 → ô đúng bằng px đo gốc.
+      // preview 720×1560 → ô đúng 163×209 px (bảng đo +6 inset).
       final w1 = portrait.widthFraction * 720;
       final h1 = portrait.heightFraction * 1560;
-      expect(w1, closeTo(157, 1e-6));
-      expect(h1, closeTo(203, 1e-6));
+      expect(w1, closeTo(163, 1e-6));
+      expect(h1, closeTo(209, 1e-6));
       // Preview khác kích thước → cùng tỉ lệ nhân lên.
       final w2 = portrait.widthFraction * 360;
       final h2 = portrait.heightFraction * 780;
-      expect(w2, closeTo(78.5, 1e-6));
-      expect(h2, closeTo(101.5, 1e-6));
+      expect(w2, closeTo(81.5, 1e-6));
+      expect(h2, closeTo(104.5, 1e-6));
     });
 
     test('4 tâm khớp 4 khung ô đã đo (tl, tr, br, bl), đối xứng', () {
@@ -256,14 +257,15 @@ void main() {
     });
   });
 
-  group('MarkerOverlayCalibration — bản NGANG (màn chụp R3.1)', () {
+  group('MarkerOverlayCalibration — bản NGANG (tham chiếu transpose; +6 px)',
+      () {
     final landscape = MarkerOverlayCalibration.landscape;
-    test('cỡ ô transpose: 203/1560 × width, 157/720 × height', () {
-      expect(landscape.widthFraction, closeTo(203 / 1560, 1e-6));
-      expect(landscape.heightFraction, closeTo(157 / 720, 1e-6));
-      // 1560×720 → ô đo gốc đúng 203×157 px.
-      expect(landscape.widthFraction * 1560, closeTo(203, 1e-6));
-      expect(landscape.heightFraction * 720, closeTo(157, 1e-6));
+    test('cỡ ô transpose: (203+6)/1560 × width, (157+6)/720 × height', () {
+      expect(landscape.widthFraction, closeTo(209 / 1560, 1e-6));
+      expect(landscape.heightFraction, closeTo(163 / 720, 1e-6));
+      // 1560×720 → ô đo gốc đúng 209×163 px.
+      expect(landscape.widthFraction * 1560, closeTo(209, 1e-6));
+      expect(landscape.heightFraction * 720, closeTo(163, 1e-6));
     });
 
     test('4 tâm = transpose của bảng dọc (cùng vị trí vật lý trên màn)', () {

@@ -136,6 +136,8 @@ List<bool> squareLockStates(
 /// đối chiếu ảnh tham chiếu TNMaker — đo trong không gian TOÀN MÀN DỌC
 /// 720 × 1560 px; `landscape` là phép transpose chính xác cho màn NGANG
 /// — cùng vị trí vật lý trên màn, chỉ đổi trục):
+/// **R3.4** — màn chụp quay về DỌC: `forArea` tự chọn bản DỌC (720×1560);
+/// bản NGANG giữ làm tham chiếu transpose.
 ///
 /// **Dọc (portrait)** — không gian 720 × 1560:
 ///
@@ -155,12 +157,11 @@ List<bool> squareLockStates(
 /// nút chụp/hint/gallery nằm ở phía còn lại của màn. KHUNG Ô KHÔNG CÓ SỐ
 /// (yêu cầu: y hệt TNMaker — ô chỉ là mục tiêu căn phiếu).
 ///
-/// Ghi chú hướng camera: TNMaker chụp NGANG — xác thực 2026-10-24 cho thấy
-/// preview NGANG khớp thực tế (màn ngang ~1.2× lệch so với buffer ngang)
-/// trong khi màn DỌC bị bóp ~1.6×. GradeVN chuyển màn chụp sang NGANG
-/// (SystemChrome) và dùng `landscape` calibration; `portrait` giữ làm tham
-/// chiếu cùng hệ toạ độ màn dọc. Mọi giá trị lưu TỈ LỆ (0..1) của vùng
-/// preview để áp dụng cho mọi kích thước màn hình.
+/// Ghi chú hướng camera: R3.4 — màn chụp GradeVN quay về DỌC (yêu cầu
+/// người dùng): `forArea` chọn `portrait` (720×1560) khi vùng preview
+/// dọc — bảng đo dọc là hình học gốc; `landscape` giữ làm tham chiếu
+/// transpose. Mọi giá trị lưu TỈ LỆ (0..1) của vùng preview để áp dụng
+/// cho mọi kích thước màn hình (không hardcode theo từng máy).
 final class MarkerOverlayCalibration {
   const MarkerOverlayCalibration._({
     required this.measureWidth,
@@ -219,10 +220,18 @@ final class MarkerOverlayCalibration {
   /// Không gian đo gốc.
   Size get measureSize => Size(measureWidth, measureHeight);
 
+  /// R3.4: cỡ ô tăng thêm [sizeInsetPx] px mỗi chiều so với bảng đo gốc —
+  /// YÊU CẦU NGƯỜI DÙNG ("tăng thêm một vài pixel"). TÂM Ô KHÔNG ĐỔI
+  /// ([centerFractions] không nhân inset) — ô phình đều quanh tâm cũ.
+  /// Ghi chú: trên MỌI màn hình (khác 720×1560) luôn dùng TỈ LỆ (nhân với
+  /// kích thước màn thật qua LayoutBuilder), nên "6 px" là 6 px của không
+  /// gian đo tham chiếu — phóng to theo cùng tỉ lệ trên mọi máy.
+  static const double sizeInsetPx = 6.0;
+
   /// Cỡ ô theo TỈ LỆ vùng preview: width × [widthFraction],
-  /// height × [heightFraction].
-  double get widthFraction => boxWidthPx / measureWidth;
-  double get heightFraction => boxHeightPx / measureHeight;
+  /// height × [heightFraction] (đã gồm inset [sizeInsetPx]).
+  double get widthFraction => (boxWidthPx + sizeInsetPx) / measureWidth;
+  double get heightFraction => (boxHeightPx + sizeInsetPx) / measureHeight;
 
   /// Toạ độ tâm chuẩn hoá: quy về [0,1] của không gian đo.
   double _fracX(double px) => px / measureWidth;

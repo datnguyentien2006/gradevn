@@ -97,15 +97,17 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   /// Giữ làm tham số dự phòng cho painter.
   final Offset _previewOrigin = Offset.zero;
 
-  /// R3.3: vị trí + cỡ ô overlay = CALIBRATION THỰC ĐỊA do người dùng đo từ
-  /// ảnh tham chiếu TNMaker (`MarkerOverlayCalibration.forArea`, bản NGANG
-  /// 1560×720 trên màn ngang): ô 203×157, 2 cột x = 64..266 / 974..1177,
-  /// 2 hàng SÁT MÉP trên/dưới — y hệt ảnh 2 (bản dọc của chính layout đó).
-  /// Lưu ý: preview tràn màn có bóp nhẹ (như ảnh tham chiếu) nhưng bảng đo
-  /// lấy TRÊN CÙNG kiểu render đó nên khớp mốc in 1-1.
+  /// R3.4: vị trí + cỡ ô overlay = CALIBRATION THỰC ĐỊA do người dùng đo
+  /// từ ảnh tham chiếu TNMaker — màn chụp quay về DỌC nên `forArea` chọn
+  /// bản DỌC (720×1560): ô 163×209 (bảng đo 157×203 + inset 6 px, R3.4
+  /// "tăng thêm một vài pixel", tâm KHÔNG đổi), 2 cột sát mép trái/phải
+  /// (x = 0..156 / 563..719), hàng trên y = 64..266, hàng dưới
+  /// y = 974..1177. Preview tràn màn bóp nhẹ (như ảnh tham chiếu, chọn
+  /// preset 16:9 để bóp ít nhất ~1.22×) nhưng bảng đo lấy TRÊN CÙNG kiểu
+  /// render đó nên khớp 1-1.
 
-  /// R3.3: kích thước khung ô overlay theo calibration HƯỚNG-THỨC
-  /// ([MarkerOverlayCalibration.forArea]) — ô 203×157 trên màn ngang.
+  /// R3.4: kích thước khung ô theo calibration HƯỚNG-THỨC
+  /// ([MarkerOverlayCalibration.forArea]) — ô 163×209 trên màn dọc.
   Size get _markerBoxSize {
     final area = _previewArea;
     if (area.width <= 0 || area.height <= 0) {
@@ -119,7 +121,7 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   }
 
   /// R3: cỡ ô "tương đương" = cạnh dài khung ô calibrated (dùng cho bán kính
-  /// khoá và cỡ chữ): ô 203×157 không đều hai cạnh nên lấy cạnh lớn.
+  /// khoá và cỡ chữ): ô 163×209 không đều hai cạnh nên lấy cạnh lớn.
   double get _markerVisualSide => math.max(
         _markerBoxSize.width,
         _markerBoxSize.height,
@@ -142,14 +144,13 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   @override
   void initState() {
     super.initState();
-    // R3.1 (TNMaker, xác thực 2026-10-24): màn chụp chạy ở HƯỚNG NGANG —
-    // cảm biến camera vốn nằm ngang; hiển thị trên màn dọc 2.17:1 làm preview
-    // bị BÓP dọc ~1.6× (hình không khớp thực tế). Màn ngang khớp khổ buffer
-    // (sai lệch còn ~1.2×) — đúng cách TNMaker làm. Khi rời màn chụp,
-    // `dispose` trả về chế độ dọc như trước.
+    // R3.4: màn chụp quay về HƯỚNG DỌC (yêu cầu người dùng 2026-10-24).
+    // Preview tràn màn trên màn dọc dài có bóp nhẹ nhưng bảng đo 4 ô đã
+    // được đo TRÊN CÙNG kiểu render dọc (720×1560) nên khớp 1-1 ảnh tham
+    // chiếu TNMaker (bản dọc). Lock dọc để không xoay khung giữa chừng
+    // làm lệch overlay.
     SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
+      DeviceOrientation.portraitUp,
     ]);
     _loadData();
     _initCamera();
@@ -208,7 +209,11 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
       }
       final controller = CameraController(
         description,
-        ResolutionPreset.max,
+        // R3.4: veryHigh = 1920×1080 + chiến lược 16:9. Màn dọc dài
+        // (19.5:9..20:9 ≈ 0.46) phủ buffer 16:9 (0.56) BÓP CHỈ ~1.22×;
+        // nếu buffer 4:3 (0.75) sẽ bóp ~1.63× — nhiều hơn hẳn. Ảnh chụp
+        // 1080p vẫn đủ nét cho pipeline chấm (warp về trang chuẩn).
+        ResolutionPreset.veryHigh,
         enableAudio: false,
         // YUV420 để đọc kênh Y trên luồng preview (băng "đã đủ 4 mốc").
         imageFormatGroup: ImageFormatGroup.yuv420,
@@ -261,9 +266,8 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     // R2: toàn bộ việc lấy mẫu kênh Y chạy TRONG isolate — thread UI không
     // quét pixel nữa, chỉ gửi nguyên khung bytes (~<1 MB) đi.
     final bytes = Uint8List.sublistView(y.bytes);
-    // R3.1: màn chụp đã KHOÁ NGANG (initState) → khung thẳng khớp màn.
-    Isolate.run(() => _analyzeMarkerFrame(bytes, stride, width, height,
-        landscapeDisplay: true))
+    // R3.4: màn chụp KHÓA DỌC (initState) → khung xoay 90° khớp màn dọc.
+    Isolate.run(() => _analyzeMarkerFrame(bytes, stride, width, height))
         .then((frame) {
       if (_analyzing) {
         _analyzing = false;
@@ -402,7 +406,8 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
 
   @override
   void dispose() {
-    // R3.1: trả về hướng DỌC mặc định của app (các màn khác thiết kế cho dọc).
+    // R3.4: màn chụp dùng DỌC (lock portraitUp trong initState) — rời màn
+    // vẫn trả dọc (app toàn bộ chạy dọc).
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
     ]);
