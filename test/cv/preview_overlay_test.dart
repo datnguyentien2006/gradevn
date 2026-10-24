@@ -191,23 +191,23 @@ void main() {
     });
   });
 
-  group('MarkerOverlayCalibration (màn dọc 720×1560; R3.4 +6 px cỡ ô)', () {
+  group('MarkerOverlayCalibration (màn dọc 720×1560; R3.4b +24 px cỡ ô)', () {
     final portrait = MarkerOverlayCalibration.portrait;
-    test('cỡ ô = (157+6)/720 × width, (203+6)/1560 × height (tâm giữ nguyên)',
+    test('cỡ ô = (157+24)/720 × width, (203+24)/1560 × height (tâm giữ nguyên)',
         () {
-      expect(portrait.widthFraction, closeTo(163 / 720, 1e-6));
-      expect(portrait.heightFraction, closeTo(209 / 1560, 1e-6));
+      expect(portrait.widthFraction, closeTo(181 / 720, 1e-6));
+      expect(portrait.heightFraction, closeTo(227 / 1560, 1e-6));
       // Tỉ lệ độc lập với đơn vị preview:
-      // preview 720×1560 → ô đúng 163×209 px (bảng đo +6 inset).
+      // preview 720×1560 → ô đúng 181×227 px (bảng đo +24 inset).
       final w1 = portrait.widthFraction * 720;
       final h1 = portrait.heightFraction * 1560;
-      expect(w1, closeTo(163, 1e-6));
-      expect(h1, closeTo(209, 1e-6));
+      expect(w1, closeTo(181, 1e-6));
+      expect(h1, closeTo(227, 1e-6));
       // Preview khác kích thước → cùng tỉ lệ nhân lên.
       final w2 = portrait.widthFraction * 360;
       final h2 = portrait.heightFraction * 780;
-      expect(w2, closeTo(81.5, 1e-6));
-      expect(h2, closeTo(104.5, 1e-6));
+      expect(w2, closeTo(90.5, 1e-6));
+      expect(h2, closeTo(113.5, 1e-6));
     });
 
     test('4 tâm khớp 4 khung ô đã đo (tl, tr, br, bl), đối xứng', () {
@@ -247,25 +247,28 @@ void main() {
       expect(centers[1].dx * 720 + 157 / 2, closeTo(720, 1e-6));
     });
 
-    test('trong khoảng [0,1] và ô không lọt lề ngoài không gian đo', () {
+    test('trong khoảng [0,1] và cỡ ô hợp lý (R3.4b inset cho phép tràn mép)', () {
       for (final c in portrait.centerFractions) {
         expect(c.dx, inExclusiveRange(0.0, 1.0));
         expect(c.dy, inExclusiveRange(0.0, 1.0));
       }
-      expect(portrait.widthFraction, lessThan(0.25));
-      expect(portrait.heightFraction, lessThan(0.25));
+      // R3.4b: ô 181×227 (inset 24 phình quanh tâm) → 181/720 ≈ 0.2514
+      // vừa vượt ngưỡng 0.25 cũ; nới lên 0.3 cho inset mới. Chiều cao
+      // 227/1560 ≈ 0.1455 vẫn dưới 0.2.
+      expect(portrait.widthFraction, lessThan(0.3));
+      expect(portrait.heightFraction, lessThan(0.2));
     });
   });
 
-  group('MarkerOverlayCalibration — bản NGANG (tham chiếu transpose; +6 px)',
+  group('MarkerOverlayCalibration — bản NGANG (tham chiếu transpose; +24 px)',
       () {
     final landscape = MarkerOverlayCalibration.landscape;
-    test('cỡ ô transpose: (203+6)/1560 × width, (157+6)/720 × height', () {
-      expect(landscape.widthFraction, closeTo(209 / 1560, 1e-6));
-      expect(landscape.heightFraction, closeTo(163 / 720, 1e-6));
-      // 1560×720 → ô đo gốc đúng 209×163 px.
-      expect(landscape.widthFraction * 1560, closeTo(209, 1e-6));
-      expect(landscape.heightFraction * 720, closeTo(163, 1e-6));
+    test('cỡ ô transpose: (203+24)/1560 × width, (157+24)/720 × height', () {
+      expect(landscape.widthFraction, closeTo(227 / 1560, 1e-6));
+      expect(landscape.heightFraction, closeTo(181 / 720, 1e-6));
+      // 1560×720 → ô đo gốc đúng 227×181 px.
+      expect(landscape.widthFraction * 1560, closeTo(227, 1e-6));
+      expect(landscape.heightFraction * 720, closeTo(181, 1e-6));
     });
 
     test('4 tâm = transpose của bảng dọc (cùng vị trí vật lý trên màn)', () {
@@ -295,13 +298,15 @@ void main() {
           same(MarkerOverlayCalibration.portrait));
     });
 
-    test('trong khoảng [0,1] và ô không lọt lề ngoài không gian đo', () {
+    test('trong khoảng [0,1] và cỡ ô hợp lý (R3.4b inset cho phép tràn mép)', () {
       for (final c in landscape.centerFractions) {
         expect(c.dx, inExclusiveRange(0.0, 1.0));
         expect(c.dy, inExclusiveRange(0.0, 1.0));
       }
-      expect(landscape.widthFraction, lessThan(0.25));
-      expect(landscape.heightFraction, lessThan(0.25));
+      // R3.4b: ô transpose 227×181 → 227/1560 ≈ 0.1455 và 181/720 ≈ 0.2514
+      // (chiều ngắn vượt 0.25 nhẹ) — nới cả hai lên 0.3 cho inset mới.
+      expect(landscape.widthFraction, lessThan(0.3));
+      expect(landscape.heightFraction, lessThan(0.3));
     });
   });
 }

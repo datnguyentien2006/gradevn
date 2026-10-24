@@ -98,16 +98,16 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   final Offset _previewOrigin = Offset.zero;
 
   /// R3.4: vị trí + cỡ ô overlay = CALIBRATION THỰC ĐỊA do người dùng đo
-  /// từ ảnh tham chiếu TNMaker — màn chụp quay về DỌC nên `forArea` chọn
-  /// bản DỌC (720×1560): ô 163×209 (bảng đo 157×203 + inset 6 px, R3.4
-  /// "tăng thêm một vài pixel", tâm KHÔNG đổi), 2 cột sát mép trái/phải
-  /// (x = 0..156 / 563..719), hàng trên y = 64..266, hàng dưới
-  /// y = 974..1177. Preview tràn màn bóp nhẹ (như ảnh tham chiếu, chọn
-  /// preset 16:9 để bóp ít nhất ~1.22×) nhưng bảng đo lấy TRÊN CÙNG kiểu
-  /// render đó nên khớp 1-1.
+  /// từ ảnh tham chiếu TNMaker — màn chụp DỌC nên `forArea` chọn bản DỌC
+  /// (720×1560): ô **181×227** (bảng đo 157×203 + inset **24 px**, R3.4
+  /// lượt 2 "tăng thêm nữa"; tâm KHÔNG đổi — ô phình quanh tâm cũ, phần
+  /// dư tràn nhẹ ra mép như kiểu TNMaker ô sát mép), 2 cột tâm x =
+  /// 78.5 / 641.5, hàng trên tâm y = 165.5, hàng dưới tâm y = 1076.5.
+  /// Preview tràn màn bóp nhẹ (như ảnh tham chiếu, preset 16:9 để bóp ít
+  /// nhất ~1.22×) nhưng bảng đo lấy TRÊN CÙNG kiểu render đó.
 
   /// R3.4: kích thước khung ô theo calibration HƯỚNG-THỨC
-  /// ([MarkerOverlayCalibration.forArea]) — ô 163×209 trên màn dọc.
+  /// ([MarkerOverlayCalibration.forArea]) — ô 181×227 trên màn dọc.
   Size get _markerBoxSize {
     final area = _previewArea;
     if (area.width <= 0 || area.height <= 0) {

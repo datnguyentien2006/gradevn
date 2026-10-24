@@ -221,12 +221,14 @@ final class MarkerOverlayCalibration {
   Size get measureSize => Size(measureWidth, measureHeight);
 
   /// R3.4: cỡ ô tăng thêm [sizeInsetPx] px mỗi chiều so với bảng đo gốc —
-  /// YÊU CẦU NGƯỜI DÙNG ("tăng thêm một vài pixel"). TÂM Ô KHÔNG ĐỔI
-  /// ([centerFractions] không nhân inset) — ô phình đều quanh tâm cũ.
-  /// Ghi chú: trên MỌI màn hình (khác 720×1560) luôn dùng TỈ LỆ (nhân với
-  /// kích thước màn thật qua LayoutBuilder), nên "6 px" là 6 px của không
-  /// gian đo tham chiếu — phóng to theo cùng tỉ lệ trên mọi máy.
-  static const double sizeInsetPx = 6.0;
+  /// YÊU CẦU NGƯỜI DÙNG (lượt 1 "+6"; lượt 2 "tăng thêm nữa" → +24 px:
+  /// ô dọc 157×203 → **181×227**). TÂM Ô KHÔNG ĐỔI
+  /// ([centerFractions] không nhân inset) — ô phình đều quanh tâm cũ,
+  /// phần dư tràn nhẹ ra ngoài mép màn ở 2 cột biên (giống ô TNMaker sát
+  /// mép). Ghi chú: trên MỌI màn hình (khác 720×1560) luôn dùng TỈ LỆ
+  /// (nhân với kích thước màn thật qua LayoutBuilder), nên "24 px" là 24 px
+  /// của không gian đo tham chiếu — phóng to theo cùng tỉ lệ trên mọi máy.
+  static const double sizeInsetPx = 24.0;
 
   /// Cỡ ô theo TỈ LỆ vùng preview: width × [widthFraction],
   /// height × [heightFraction] (đã gồm inset [sizeInsetPx]).
