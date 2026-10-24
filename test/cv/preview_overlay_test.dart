@@ -190,4 +190,57 @@ void main() {
       expect(p2.projectedMarkerSide, lessThan(p.projectedMarkerSide));
     });
   });
+
+  group('MarkerOverlayCalibration (đo thực địa 2026-10-24, 720×1241)', () {
+    test('cỡ ô = 157/720 × width, 203/1241 × height (khung đo thực tế)', () {
+      expect(MarkerOverlayCalibration.widthFraction, closeTo(157 / 720, 1e-6));
+      expect(MarkerOverlayCalibration.heightFraction, closeTo(203 / 1241, 1e-6));
+      // Tỉ lệ độc lập với đơn vị preview:
+      // preview 720×1241 → ô đúng bằng px đo gốc.
+      final w1 = MarkerOverlayCalibration.widthFraction * 720;
+      final h1 = MarkerOverlayCalibration.heightFraction * 1241;
+      expect(w1, closeTo(157, 1e-6));
+      expect(h1, closeTo(203, 1e-6));
+      // Preview khác kích thước → cùng tỉ lệ nhân lên.
+      final w2 = MarkerOverlayCalibration.widthFraction * 360;
+      final h2 = MarkerOverlayCalibration.heightFraction * 620.5;
+      expect(w2, closeTo(78.5, 1e-6));
+      expect(h2, closeTo(101.5, 1e-6));
+    });
+
+    test('4 tâm khớp 4 khung ô đã đo (tl, tr, br, bl), đối xứng', () {
+      final centers = MarkerOverlayCalibration.centerFractions;
+      expect(centers.length, 4);
+      // Tâm include-bounds: tl [0..156]×[64..266] → (78.5, 165.5).
+      expect(centers[0].dx, closeTo(78.5 / 720, 1e-6));
+      expect(centers[0].dy, closeTo(165.5 / 1241, 1e-6));
+      // tr [562..719]×[64..266] → (641.5, 165.5).
+      expect(centers[1].dx, closeTo(641.5 / 720, 1e-6));
+      expect(centers[1].dy, closeTo(165.5 / 1241, 1e-6));
+      // br [562..719]×[975..1177] → (641.5, 1076.5).
+      expect(centers[2].dx, closeTo(641.5 / 720, 1e-6));
+      expect(centers[2].dy, closeTo(1076.5 / 1241, 1e-6));
+      // bl [0..156]×[975..1177] → (78.5, 1076.5).
+      expect(centers[3].dx, closeTo(78.5 / 720, 1e-6));
+      expect(centers[3].dy, closeTo(1076.5 / 1241, 1e-6));
+      // Cặp đối xứng trục dọc: tl/tr cùng dy, br/bl cùng dy; cặp ngang
+      // cùng dx, tổng 2 tâm ngang = 1.0 (tiệm cận đối xứng biên).
+      expect(centers[0].dy, centers[1].dy);
+      expect(centers[2].dy, centers[3].dy);
+      expect(centers[0].dx, centers[3].dx);
+      expect(centers[1].dx, centers[2].dx);
+      expect(centers[0].dx + centers[1].dx, closeTo(1.0, 1e-6));
+    });
+
+    test('trong khoảng [0,1] và ô không lọt lề ngoài không gian đo', () {
+      final centers = MarkerOverlayCalibration.centerFractions;
+      for (final c in centers) {
+        expect(c.dx, inExclusiveRange(0.0, 1.0));
+        expect(c.dy, inExclusiveRange(0.0, 1.0));
+      }
+      expect(MarkerOverlayCalibration.widthFraction, lessThan(0.25));
+      expect(MarkerOverlayCalibration.heightFraction, lessThan(0.25));
+    });
+  },
+  );
 }

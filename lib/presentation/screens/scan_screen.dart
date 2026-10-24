@@ -30,7 +30,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../data/cv/detection_proof.dart' show saveDetectionProof;
 import '../../data/cv/preview_overlay.dart'
-    show CoverMapping, SheetProjection, snapSquareCenters, squareLockStates;
+    show CoverMapping, MarkerOverlayCalibration, snapSquareCenters, squareLockStates;
 import '../../data/cv/scan_flow.dart'
     show GradedScan, UngradedReason, processPhoto;
 import '../../data/cv/sheet_alignment.dart';
@@ -90,48 +90,44 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   /// khung ↔ màn hình và tính khoảng cách snap.
   Size _previewArea = Size.zero;
 
-  /// R3: phép chiếu phiếu ảo hiện hành (null khi chưa đo được preview/contest).
+  /// R3 (2026-10-24): phép chiếu phiếu ảo aspect-fit BỊ THAY bằng
+  /// CALIBRATION THỰC ĐỊA — giáo viên đo trực tiếp 4 khung mốc TRÊN MÀN
+  /// CAMERA thiết bị (không gian 720 × 1241 px, lề trên/dưới đều 64 px):
   ///
-  /// Khung ảo = hình chữ nhật aspect-fit của TRANG GIẤY nguyên vẹn (kể cả
-  /// lề, giữ tỉ lệ template) giữa vùng preview; 4 ô overlay mặc định nằm
-  /// tại vị trí chiếu của 4 tâm mốc góc và cỡ ô theo cạnh mốc in thật.
-  SheetProjection? _projection() {
-    final contest = _contest;
+  /// | Vị trí     | x (trái→phải) | y (trên→dưới) | Kích thước |
+  /// |------------|---------------|---------------|-----------:|
+  /// | Trên-trái  | 0 → 156       | 64 → 266      | 157 × 203  |
+  /// | Trên-phải  | 562 → 719     | 64 → 266      | 158 × 203  |
+  /// | Dưới-trái  | 0 → 156       | 975 → 1177    | 157 × 203  |
+  /// | Dưới-phải  | 562 → 719     | 975 → 1177    | 158 × 203  |
+  ///
+  /// Toàn bộ chuyển thành TỈ LỆ (0..1) của vùng preview → đúng vị trí/cỡ
+  /// trên mọi màn hình; kéo tay (R2, flag `showManualAlignment`) vẫn chỉnh
+  /// được quanh vị trí mặc định này.
+
+  /// R3: kích thước khung ô overlay theo calibration (tỉ lệ preview).
+  Size get _markerBoxSize {
     final area = _previewArea;
-    if (contest == null ||
-        area == Size.zero ||
-        area.width <= 0 ||
-        area.height <= 0) {
-      return null;
+    if (area.width <= 0 || area.height <= 0) {
+      return const Size(60, 78);
     }
-    final layout =
-        SheetLayout.forSpec(contest.sheetSpec, page: SheetLayout.standardPage);
-    return SheetProjection(
-      pageSize: layout.page,
-      markerCenters: layout.cornerMarkerCenters,
-      markerSide: layout.template.markerSide * layout.scale,
-      area: area,
-      // obs_006: khi phiếu phủ kín view, ô mốc bám SÁT MÉP khung (lề ~4–5%)
-      // chứ không hẹp trong giữa màn — giảm lề khung ảo từ 8% xuống 5%.
-      marginRatio: 0.05,
+    return Size(
+      MarkerOverlayCalibration.widthFraction * area.width,
+      MarkerOverlayCalibration.heightFraction * area.height,
     );
   }
 
-  /// R3: cỡ hiển thị của ô mốc = cạnh mốc in thật × tỉ lệ khung ảo; SÀN
-  /// ~12% bề rộng preview (obs_006: ô chiếm ~12% bề rộng màn hình khi phiếu
-  /// phủ khung — ô quá nhỏ khó kéo và khó "bao trọn" ô đen in trên phiếu).
-  double get _markerVisualSide {
-    final p = _projection();
-    final w = _previewArea.width;
-    if (p == null || w <= 0) return 56;
-    return p.projectedMarkerSide
-        .clamp(w * 0.12, w * 0.22)
-        .clamp(34.0, 150.0);
-  }
+  /// R3: cỡ ô "tương đương" = cạnh dài khung ô calibrated (dùng cho bán kính
+  /// khoá và cỡ chữ): ô 157×203 không đều hai cạnh nên lấy cạnh lớn.
+  double get _markerVisualSide => math.max(
+        _markerBoxSize.width,
+        _markerBoxSize.height,
+      );
 
-  /// R3: bán kính "khoá" — tâm ô cách một ứng viên mốc ≤ 0.9 × cỡ ô hiển thị
-  /// thì coi như ô ấy đã bám đúng mốc (viền xanh).
-  double get _lockRadius => _markerVisualSide * 0.9;
+  /// R3: bán kính "khoá" — tâm ô cách một ứng viên mốc ≤ 0.75 × cạnh dài khung
+  /// (nửa đường chéo khung ≈ 0.62 × cạnh dài; 0.75 đủ lỏng cho ngón tay/contact
+  /// giữa ô overlay và mốc detect được trong khung).
+  double get _lockRadius => _markerVisualSide * 0.75;
 
   /// Đang phân tích 1 khung preview (trong isolate) — chặn chồng khung.
   bool _analyzing = false;
@@ -818,23 +814,21 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   /// cỡ ô theo cạnh mốc in thật × tỉ lệ khung; kéo tự do (R2), snap khi
   /// detector tự tìm được, khoá → viền xanh. Trả về các widget `Positioned`.
   List<Widget> _buildSquares() {
-    // Khởi tạo vị trí mặc định theo PHÉP CHIẾU (lần đầu build, khi đã đo
-    // được vùng preview).
-    // CHÚ Ý R2-fix: giữ nguyên — danh sách THAY ĐỔI ĐƯỢC (không `const`), vì
+    // R3 (2026-10-24): vị trí mặc định theo CALIBRATION THỰC ĐỊA
+    // ([MarkerOverlayCalibration.centerFractions]) thay cho phép chiếu
+    // aspect-fit. Danh sách THAY ĐỔI ĐƯỢC (không `const`) — R2-fix giữ nguyên:
     // _moveSquare gán phần tử (bug demo 2026-10-23: `const <Offset>[...]`
     // làm ô đứng im vì UnsupportedError bị nuốt trong setState).
     final area = _previewArea;
-    final projection = _projection();
-    if (_squareCenters == null && projection != null && area.width > 0) {
+    if (_squareCenters == null && area.width > 0) {
       _squareCenters = <Offset>[
-        for (final c in projection.projectedMarkerCenters)
-          Offset(c.dx / area.width, c.dy / area.height),
+        ...MarkerOverlayCalibration.centerFractions,
       ];
     }
     final centers = _squareCenters;
     if (centers == null) return const [];
     final locks = _lockStates() ?? const <bool>[false, false, false, false];
-    final side = _markerVisualSide;
+    final box = _markerBoxSize;
     final squares = <Widget>[];
     for (var i = 0; i < 4 && i < centers.length; i++) {
       final c = centers[i];
@@ -851,10 +845,12 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
       // Trục hit phải rộng hơn trục vẽ (pad 12 mỗi phía) để ngón tay kéo
       // được cả ô mốc nhỏ khi camera gần phiếu.
       const hitPad = 12.0;
+      final radius = box.shortestSide * 0.10;
+      final labelSize = (box.shortestSide * 0.30).clamp(12.0, 22.0);
       squares.add(Positioned(
         key: ObjectKey(i),
-        left: px.dx - side / 2 - hitPad,
-        top: px.dy - side / 2 - hitPad,
+        left: px.dx - box.width / 2 - hitPad,
+        top: px.dy - box.height / 2 - hitPad,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onPanStart: (_) => _draggingIndex = i,
@@ -868,11 +864,11 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
           child: Padding(
             padding: const EdgeInsets.all(hitPad),
             child: Container(
-              width: side,
-              height: side,
+              width: box.width,
+              height: box.height,
               decoration: BoxDecoration(
                 color: fillColor,
-                borderRadius: BorderRadius.circular(side * 0.10),
+                borderRadius: BorderRadius.circular(radius),
                 border: Border.all(color: borderColor, width: locked ? 3 : 0),
               ),
               child: Center(
@@ -884,7 +880,7 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
                     color: locked
                         ? const Color(0xFF1B5E20)
                         : Colors.black.withValues(alpha: 0.30),
-                    fontSize: (side * 0.30).clamp(12.0, 22.0),
+                    fontSize: labelSize,
                     fontWeight: FontWeight.bold,
                   ),
                 ),

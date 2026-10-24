@@ -132,6 +132,64 @@ List<bool> squareLockStates(
   ];
 }
 
+/// R3 — CALIBRATION THỰC ĐỊA của 4 ô overlay trên màn CAMERA (2026-10-24,
+/// giáo viên đo trực tiếp trên thiết bị ở không gian 720 × 1241 px):
+///
+/// | Vị trí     | x (trái→phải) | y (trên→dưới) | Kích thước |
+/// |------------|---------------|---------------|-----------:|
+/// | Trên-trái  | 0 → 156       | 64 → 266      | 157 × 203  |
+/// | Trên-phải  | 562 → 719     | 64 → 266      | 158 × 203  |
+/// | Dưới-trái  | 0 → 156       | 975 → 1177    | 157 × 203  |
+/// | Dưới-phải  | 562 → 719     | 975 → 1177    | 158 × 203  |
+///
+/// Số liệu là biên INCLUSIVE (kiểu `bounds` của UI dump: 719 = 720 − 1,
+/// 1177 = 1241 − 1); lề trên/dưới đều 64 px nên không gian dọc 1241.
+/// Mọi giá trị lưu dưới dạng TỈ LỆ (0..1) của vùng preview để áp dụng cho
+/// mọi kích thước màn hình, thay cho phép chiếu aspect-fit từ template
+/// (vốn lệch so với thực địa trên thiết bị).
+final class MarkerOverlayCalibration {
+  const MarkerOverlayCalibration._();
+
+  /// Không gian đo gốc (px thiết bị).
+  static const double measureWidth = 720;
+  static const double measureHeight = 1241;
+
+  /// Bên trong khung đo: [0, 64][719, 1177].
+  static const double _innerLeft = 0;
+  static const double _innerTop = 64;
+  static const double _innerRight = 719;
+  static const double _innerBottom = 1177;
+
+  /// Cỡ ô đo được (px không gian đo): 157–158 × 203 → lấy các giá trị
+  /// hợp nhất (đối xứng).
+  static const double _boxWidth = 157;
+  static const double _boxHeight = 203;
+
+  /// Cỡ ô theo tỉ lệ vùng preview: width × [widthFraction],
+  /// height × [heightFraction].
+  static double get widthFraction => _boxWidth / measureWidth; // ≈ 0.2181
+  static double get heightFraction => _boxHeight / measureHeight; // ≈ 0.1636
+
+  /// Toạ độ tâm chuẩn hoá (px không gian đo / kích thước không gian đo).
+  static double _fracX(double px) => px / measureWidth;
+  static double _fracY(double py) => py / measureHeight;
+
+  /// Tâm 4 ô overlay theo TỈ LỆ vùng preview, thứ tự tl, tr, br, bl
+  /// (giống [SheetLayout.cornerMarkerCenters]). Tâm = biên trái + cỡ/2
+  /// (hệ toạ độ liên tục của vùng preview).
+  static List<Offset> get centerFractions => [
+        Offset(_fracX(_innerLeft + _boxWidth / 2), // tl
+            _fracY(_innerTop + _boxHeight / 2)),
+        Offset(_fracX((_innerRight + 1) - _boxWidth / 2), // tr
+            _fracY(_innerTop + _boxHeight / 2)),
+        Offset(_fracX((_innerRight + 1) - _boxWidth / 2), // br
+            _fracY((_innerBottom + 1) - _boxHeight / 2)),
+        Offset(_fracX(_innerLeft + _boxWidth / 2), // bl
+            _fracY((_innerBottom + 1) - _boxHeight / 2)),
+      ];
+}
+
+
 /// R3 — PHÉP CHIẾU PHIẾU ẢO lên preview camera.
 ///
 /// Dựng một "khung phiếu ảo" (virtual sheet outline): hình chữ nhật
