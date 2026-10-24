@@ -91,6 +91,36 @@
       "error": { "type": "String" }
     }
   },
+  "scanSheetUnreadable": "Đọc không được phiếu — đặt phiếu phẳng, đủ 4 mốc góc đen trong khung rồi chụp lại.",
+
+  "gradeResultRetake": "CHỤP LẠI",
+  "gradeResultKeep": "GIỮ",
+  "warnTitle": "Warning !!!",
+  "warnDuplicateLabel": "Trùng SBD",
+  "warnDuplicateNone": "Không trùng",
+  "warnDuplicateYes": "Có",
+  "warnExamMissing": "Không tồn tại",
+  "warnExamGuess": "Không đọc được — dùng key (?{count})",
+  "warnMultiLabel": "Nhiều đáp án",
+  "warnMultiValue": "{count} câu",
+  "@warnMultiValue": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "warnBlankLabel": "Không trả lời",
+  "warnBlankValue": "P1: {count}",
+  "@warnBlankValue": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "warnIrregularLabel": "Sai quy chế",
+  "warnIrregularValue": "SBD/mã đề tô không rõ",
+  "gradeLegendTitle": "Chú thích màu trên phiếu",
+  "gradeLegendCorrect": "Xanh lá — câu đúng",
+  "gradeLegendWrong": "Đỏ — câu sai",
+  "gradeLegendBlank": "Vàng — câu bỏ trống",
 
   "sheetListTitle": "Phiếu đã chấm",
   "sheetTileNoCode": "Không có số báo danh",

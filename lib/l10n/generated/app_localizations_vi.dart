@@ -190,6 +190,70 @@ class AppLocalizationsVi extends AppLocalizations {
   }
 
   @override
+  String get scanSheetUnreadable =>
+      'Đọc không được phiếu — đặt phiếu phẳng, đủ 4 mốc góc đen trong khung rồi chụp lại.';
+
+  @override
+  String get gradeResultRetake => 'CHỤP LẠI';
+
+  @override
+  String get gradeResultKeep => 'GIỮ';
+
+  @override
+  String get warnTitle => 'Warning !!!';
+
+  @override
+  String get warnDuplicateLabel => 'Trùng SBD';
+
+  @override
+  String get warnDuplicateNone => 'Không trùng';
+
+  @override
+  String get warnDuplicateYes => 'Có';
+
+  @override
+  String get warnExamMissing => 'Không tồn tại';
+
+  @override
+  String warnExamGuess(Object count) {
+    return 'Không đọc được — dùng key (?$count)';
+  }
+
+  @override
+  String get warnMultiLabel => 'Nhiều đáp án';
+
+  @override
+  String warnMultiValue(int count) {
+    return '$count câu';
+  }
+
+  @override
+  String get warnBlankLabel => 'Không trả lời';
+
+  @override
+  String warnBlankValue(int count) {
+    return 'P1: $count';
+  }
+
+  @override
+  String get warnIrregularLabel => 'Sai quy chế';
+
+  @override
+  String get warnIrregularValue => 'SBD/mã đề tô không rõ';
+
+  @override
+  String get gradeLegendTitle => 'Chú thích màu trên phiếu';
+
+  @override
+  String get gradeLegendCorrect => 'Xanh lá — câu đúng';
+
+  @override
+  String get gradeLegendWrong => 'Đỏ — câu sai';
+
+  @override
+  String get gradeLegendBlank => 'Vàng — câu bỏ trống';
+
+  @override
   String get sheetListTitle => 'Phiếu đã chấm';
 
   @override

@@ -156,6 +156,14 @@ final class OmrScanService {
   /// làm lưới an toàn: detector ưu tiên trước; detector thất bại mới thử
   /// phân định hướng rồi warp theo vị trí ghim.
   ///
+  /// \[skipVerification\] (R4) — bỏ kiểm chứng round-trip: dùng ở lượt THỬ
+  /// THỨ khi lượt thường rớt (mốc phai/ánh sáng) — giáo viên ĐÃ canh 4 ô
+  /// trên preview khớp mốc nên chấp nhận warp theo vị trí ghim, chấm thẳng
+  /// luôn thay vì rơi màn ghim tay.
+  ///
+  /// \[overlayMinQuality\] (R4) — hạ ngưỡng chất lượng quad overlay ở lượt
+  /// thử thứ (mặc định 0.55, nới xuống 0.35): mốc hơi mờ vẫn nhận.
+  ///
   /// \[knownQuad\] là quad ở HỆ ẢNH CHỤP (pixel ảnh decode) — dùng khi đã biết
   /// chắc toạ độ (vd. ảnh đã nắn về trang chuẩn từ CropReviewScreen: quad =
   /// 4 tâm mốc góc trang chuẩn), không dò hướng, không chạy detector.
@@ -166,6 +174,8 @@ final class OmrScanService {
     AlignmentQuad? overlayQuad,
     Size frameSize = const Size(1, 1),
     AlignmentQuad? knownQuad,
+    bool skipVerification = false,
+    double overlayMinQuality = _overlayQuadMinQuality,
   }) {
     final stopwatch = Stopwatch()..start();
     final layout = SheetLayout.forSpec(spec, page: omrPageSize);
@@ -195,6 +205,7 @@ final class OmrScanService {
           frameSize: frameSize,
           layout: layout,
           targetQuad: targetQuad,
+          minQuality: overlayMinQuality,
         );
       }
     }
@@ -217,41 +228,48 @@ final class OmrScanService {
         targetQuad: targetQuad,
         outputSize: layout.page,
       );
-      // R3 — KIỂM CHỨNG ROUND-TRIP: ảnh đã nắn phải tái-detect được CẢ 4 mốc
-      // góc trong ≤ 6 px trang chuẩn. Góc nào lệch ⇒ coi như phiếu chưa căn
-      // đúng (warp rác/pin nhắm) → null → UI rơi CropReviewScreen, KHÔNG chấm
-      // một phiếu có thể sai lattice.
-      verification = verifyWarpedMarkers(warped, layout: layout);
-      // R3.1 (màn NGANG): detector gán nhãn tl/tr/br/bl theo TRỤC ẢNH decode;
-      // ảnh chụp ngang khiến quad đúng VỊ TRÍ nhưng NHÃN lệch 90° ⇒ warp sai
-      // chiều ⇒ kiểm chứng rớt. Khi có vị trí GHIM từ preview, phân định
-      // hướng qua ĐIỂM TỐI của mốc thật rồi thử lại — lượt đạt kiểm chứng
-      // mới được dùng.
-      if (!verification.passed && overlayQuad != null) {
-        final alt = _resolveOverlayQuad(
-          imageBytes,
-          overlayQuad: overlayQuad,
-          frameSize: frameSize,
-          layout: layout,
-          targetQuad: targetQuad,
-        );
-        if (alt != null) {
-          final altWarped = warper.warpRectify(
+      // R4: lượt thử THỨ (skipVerification) → chấm thẳng theo quad BEST
+      // hiện có: detector quad hoặc overlay quad (đã đạt quality).
+      if (skipVerification) {
+        verification = null;
+      } else {
+        // R3 — KIỂM CHỨNG ROUND-TRIP: ảnh đã nắn phải tái-detect được CẢ
+        // 4 mốc góc trong ≤ 6 px trang chuẩn. Góc nào lệch ⇒ coi như phiếu
+        // chưa căn đúng (warp rác/pin nhắm) → null → UI rơi
+        // CropReviewScreen, KHÔNG chấm một phiếu có thể sai lattice.
+        verification = verifyWarpedMarkers(warped, layout: layout);
+        // R3.1 (màn NGANG): detector gán nhãn tl/tr/br/bl theo TRỤC ẢNH
+        // decode; ảnh chụp ngang khiến quad đúng VỊ TRÍ nhưng NHÃN lệch
+        // 90° ⇒ warp sai chiều ⇒ kiểm chứng rớt. Khi có vị trí GHIM từ
+        // preview, phân định hướng qua ĐIỂM TỐI của mốc thật rồi thử lại
+        // — lượt đạt kiểm chứng mới được dùng.
+        if (!verification.passed && overlayQuad != null) {
+          final alt = _resolveOverlayQuad(
             imageBytes,
-            quad: alt,
+            overlayQuad: overlayQuad,
+            frameSize: frameSize,
+            layout: layout,
             targetQuad: targetQuad,
-            outputSize: layout.page,
+            minQuality: overlayMinQuality,
           );
-          final altVerification =
-              verifyWarpedMarkers(altWarped, layout: layout);
-          if (altVerification.passed) {
-            quad = alt;
-            warped = altWarped;
-            verification = altVerification;
+          if (alt != null) {
+            final altWarped = warper.warpRectify(
+              imageBytes,
+              quad: alt,
+              targetQuad: targetQuad,
+              outputSize: layout.page,
+            );
+            final altVerification =
+                verifyWarpedMarkers(altWarped, layout: layout);
+            if (altVerification.passed) {
+              quad = alt;
+              warped = altWarped;
+              verification = altVerification;
+            }
           }
         }
+        if (!verification.passed) return null;
       }
-      if (!verification.passed) return null;
     }
     final scanResult = scan(warped, layout: layout, spec: spec, tuning: tuning);
     stopwatch.stop();
@@ -282,6 +300,7 @@ final class OmrScanService {
     required Size frameSize,
     required SheetLayout layout,
     required AlignmentQuad targetQuad,
+    double minQuality = _overlayQuadMinQuality,
   }) {
     final size = probeImageSize(imageBytes);
     if (size == null) return null;
@@ -360,7 +379,8 @@ final class OmrScanService {
     // Ngưỡng tin cậy: biến thể quad đúng cho LÕI 12 mốc TỐI (≥50% pixel
     // <110) VÀ vòng ngoài mép mốc TRẮNG (lề giấy ≥ 50% pixel >190) —
     // quad rác (đo giữa nội dung) không thể đạt đồng thời cả hai.
-    if (best == null || bestScore < _overlayQuadMinQuality) return null;
+    // R4: ngưỡng nhận qua [minQuality] — lượt thử thứ nới lỏng 0.35.
+    if (best == null || bestScore < minQuality) return null;
     return best;
   }
 

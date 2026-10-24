@@ -34,6 +34,7 @@ final class GradedScan {
     required this.photo,
     this.graded = true,
     this.ungradedReason,
+    this.multiAnswerCount = 0,
   });
 
   /// Kết quả chấm (cờ đúng/sai từng câu + điểm tổng + điểm từng phần).
@@ -66,6 +67,10 @@ final class GradedScan {
 
   /// R2: lý do bỏ chấm ([UngradedReason]) — non null khi [graded] == false.
   final UngradedReason? ungradedReason;
+
+  /// R4: số câu tô ≥2 ô thật sự (cảnh báo "Nhiều đáp án" màn kết quả —
+  /// decode vẫn chọn ô đậm nhất, KHÔNG chặn chấm).
+  final int multiAnswerCount;
 }
 
 /// Chấm một phiếu từ dữ liệu đã giải mã (thuần, không IO).
@@ -161,6 +166,12 @@ GradedScan gradeScan({
     usedBestGuessKey: usedBestGuessKey,
     student: student,
     photo: photo,
+    // R4: cảnh báo "Nhiều đáp án" — đếm câu có ≥2 ô đậm (decode vẫn chọn
+    // ô đậm nhất; không chặn chấm).
+    multiAnswerCount: OmrDecoder.countMultiMarkAnswers(
+      blocks: photo.scan.answerBlocks,
+      totalQuestions: totalQuestions,
+    ),
   );
 }
 
@@ -176,6 +187,7 @@ final class _ScanJob {
     this.overlayQuad,
     this.overlayFrameSize = const Size(1, 1),
     this.knownQuad,
+    this.relaxed = false,
   });
 
   final Uint8List bytes;
@@ -190,6 +202,11 @@ final class _ScanJob {
 
   /// R2: quad hệ ẢNH CHỤP biết chắc (ảnh đã nắn về trang chuẩn).
   final AlignmentQuad? knownQuad;
+
+  /// R4: lượt THỬ THỨ nới lỏng (bỏ kiểm chứng round-trip + hạ ngưỡng
+  /// overlay) — giáo viên đã canh 4 ô khớp mốc trên preview → chấm thẳng
+  /// thay vì rơi CropReview.
+  final bool relaxed;
 }
 
 /// Thân isolate: quét ảnh → chấm. Hàm top-level (isolate không gửi method).
@@ -201,6 +218,8 @@ GradedScan? _scanAndGrade(_ScanJob job) {
     overlayQuad: job.overlayQuad,
     frameSize: job.overlayFrameSize,
     knownQuad: job.knownQuad,
+    skipVerification: job.relaxed,
+    overlayMinQuality: job.relaxed ? 0.35 : _defaultOverlayMinQuality,
   );
   if (photo == null) return null; // khung căn chỉnh không tìm thấy
   return gradeScan(
@@ -221,6 +240,12 @@ GradedScan? _scanAndGrade(_ScanJob job) {
 /// R2: khi FE báo trước quad ghim 4 ô vuông từ preview ([overlayQuad] +
 /// [frameSize]) hoặc quad hệ ảnh chụp chắc chắn ([knownQuad]) → pipeline
 /// đổi thứ tự dự phòng như mô tả ở [OmrScanService.scanPhoto].
+///
+/// R4 — LUỒN CHẤM THẲNG (yêu cầu người dùng): lượt 1 chấm như thường; nếu
+/// rớt (mốc phai / kiểm chứng < 6px / quad overlay dưới 0.55) chạy LƯỢT 2
+/// nới lỏng ngay trong cùng isolate (bỏ kiểm chứng round-trip + hạ ngưỡng
+/// overlay 0.35) — KHÔNG còn rơi về màn ghim mốc thủ công nữa. Chỉ báo lỗi
+/// ở UI mới là "đọc không được phiếu → chụp lại".
 Future<GradedScan?> processPhoto(
   Uint8List bytes, {
   required Contest contest,
@@ -242,6 +267,23 @@ Future<GradedScan?> processPhoto(
       overlayFrameSize: frameSize,
       knownQuad: knownQuad,
     );
-    return _scanAndGrade(job);
+    final normal = _scanAndGrade(job);
+    if (normal != null) return normal;
+    // R4: lượt 2 — nới lỏng mọi kiểm chứng, chấm best-effort.
+    return _scanAndGrade(_ScanJob(
+      bytes: bytes,
+      contest: contest,
+      keys: keys,
+      candidateStudents: candidateStudents,
+      tuning: tuning,
+      overlayQuad: overlayQuad,
+      overlayFrameSize: frameSize,
+      knownQuad: knownQuad,
+      relaxed: true,
+    ));
   });
 }
+
+/// Ngưỡng overlay mặc định của [OmrScanService] (0.55) — giữ một hằng ở
+/// tầng flow để lượt 1 KHÔNG truyền gì (dùng mặc định) và lượt 2 nới rõ.
+const double _defaultOverlayMinQuality = 0.55;

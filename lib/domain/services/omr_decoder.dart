@@ -135,6 +135,33 @@ final class OmrDecoder {
     return buffer.toString();
   }
 
+  /// R4 — ĐẾM câu tô NHIỀU ĐÁP ÁN (cảnh báo màn kết quả).
+  ///
+  /// Câu bị nếu 2 ô đậm nhất CÙNG đạt mực thật (≥ [doubleMarkThreshold]):
+  /// viền bong bóng in nét đo được ~0,30–0,33 nên ngưỡng 0,55 an toàn — ô
+  /// tô thật (mực đậm ~0,8–1,0) luôn vượt; mờ nhẹ (bút chí) có thể lọt ->
+  /// chỉ là cảnh báo, không chặn chấm.
+  static int countMultiMarkAnswers({
+    required List<DensityBlock> blocks,
+    required int totalQuestions,
+    int rowsPerAnswerBlock = 10,
+    double doubleMarkThreshold = 0.55,
+  }) {
+    var count = 0;
+    for (var b = 0; b < blocks.length; b++) {
+      final block = blocks[b];
+      for (var row = 0; row < block.rows; row++) {
+        final questionIndex = b * rowsPerAnswerBlock + row;
+        if (questionIndex >= totalQuestions) break;
+        final densities = <double>[for (var c = 0; c < block.columns; c++) block.at(row, c)];
+        densities.sort((a, b) => b.compareTo(a));
+        final dark = densities.where((d) => d >= doubleMarkThreshold).length;
+        if (dark >= 2) count++;
+      }
+    }
+    return count;
+  }
+
   /// Chuẩn hoá mã (mã đề / số báo danh) để so khớp giữa key và phiếu.
   ///
   /// - Chuỗi toàn chữ số: bỏ các số 0 vô nghĩa ở đầu ("000001" → "1").

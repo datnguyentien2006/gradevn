@@ -418,6 +418,120 @@ abstract class AppLocalizations {
   /// **'Đã xảy ra lỗi: {error}'**
   String scanError(String error);
 
+  /// No description provided for @scanSheetUnreadable.
+  ///
+  /// In vi, this message translates to:
+  /// **'Đọc không được phiếu — đặt phiếu phẳng, đủ 4 mốc góc đen trong khung rồi chụp lại.'**
+  String get scanSheetUnreadable;
+
+  /// No description provided for @gradeResultRetake.
+  ///
+  /// In vi, this message translates to:
+  /// **'CHỤP LẠI'**
+  String get gradeResultRetake;
+
+  /// No description provided for @gradeResultKeep.
+  ///
+  /// In vi, this message translates to:
+  /// **'GIỮ'**
+  String get gradeResultKeep;
+
+  /// No description provided for @warnTitle.
+  ///
+  /// In vi, this message translates to:
+  /// **'Warning !!!'**
+  String get warnTitle;
+
+  /// No description provided for @warnDuplicateLabel.
+  ///
+  /// In vi, this message translates to:
+  /// **'Trùng SBD'**
+  String get warnDuplicateLabel;
+
+  /// No description provided for @warnDuplicateNone.
+  ///
+  /// In vi, this message translates to:
+  /// **'Không trùng'**
+  String get warnDuplicateNone;
+
+  /// No description provided for @warnDuplicateYes.
+  ///
+  /// In vi, this message translates to:
+  /// **'Có'**
+  String get warnDuplicateYes;
+
+  /// No description provided for @warnExamMissing.
+  ///
+  /// In vi, this message translates to:
+  /// **'Không tồn tại'**
+  String get warnExamMissing;
+
+  /// No description provided for @warnExamGuess.
+  ///
+  /// In vi, this message translates to:
+  /// **'Không đọc được — dùng key (?{count})'**
+  String warnExamGuess(Object count);
+
+  /// No description provided for @warnMultiLabel.
+  ///
+  /// In vi, this message translates to:
+  /// **'Nhiều đáp án'**
+  String get warnMultiLabel;
+
+  /// No description provided for @warnMultiValue.
+  ///
+  /// In vi, this message translates to:
+  /// **'{count} câu'**
+  String warnMultiValue(int count);
+
+  /// No description provided for @warnBlankLabel.
+  ///
+  /// In vi, this message translates to:
+  /// **'Không trả lời'**
+  String get warnBlankLabel;
+
+  /// No description provided for @warnBlankValue.
+  ///
+  /// In vi, this message translates to:
+  /// **'P1: {count}'**
+  String warnBlankValue(int count);
+
+  /// No description provided for @warnIrregularLabel.
+  ///
+  /// In vi, this message translates to:
+  /// **'Sai quy chế'**
+  String get warnIrregularLabel;
+
+  /// No description provided for @warnIrregularValue.
+  ///
+  /// In vi, this message translates to:
+  /// **'SBD/mã đề tô không rõ'**
+  String get warnIrregularValue;
+
+  /// No description provided for @gradeLegendTitle.
+  ///
+  /// In vi, this message translates to:
+  /// **'Chú thích màu trên phiếu'**
+  String get gradeLegendTitle;
+
+  /// No description provided for @gradeLegendCorrect.
+  ///
+  /// In vi, this message translates to:
+  /// **'Xanh lá — câu đúng'**
+  String get gradeLegendCorrect;
+
+  /// No description provided for @gradeLegendWrong.
+  ///
+  /// In vi, this message translates to:
+  /// **'Đỏ — câu sai'**
+  String get gradeLegendWrong;
+
+  /// No description provided for @gradeLegendBlank.
+  ///
+  /// In vi, this message translates to:
+  /// **'Vàng — câu bỏ trống'**
+  String get gradeLegendBlank;
+
   /// No description provided for @sheetListTitle.
   ///
   /// In vi, this message translates to:

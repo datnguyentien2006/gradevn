@@ -1,11 +1,10 @@
-// Màn chấm phiếu bằng camera (R1→R3): preview TRÀN TOÀN MÀN HÌNH (không
+// Màn chấm phiếu bằng camera (R1→R4): preview TRÀN TOÀN MÀN HÌNH (không
 // AppBar) đúng như ảnh tham chiếu obs_006.png của TN Maker; 4 ô vuông
-// TRẮNG ĐẶC là PHÉP CHIẾU của 4 ô vuông đen góc phiếu theo khung phiếu ảo
-// (aspect-fit trang chuẩn) — không phải trang trí ở góc màn; giáo viên kéo
-// ô TRẮNG đè BAO TRỌN ô đen in trên phiếu (drag/snap R2), detector bám
-// chắc thì ô KHOÁ viền xanh. Nút chụp LUÔN bật; chấm trong isolate; thiếu
-// mốc → màn ghim 4 ô vuông đen (CropReviewScreen) rồi chạy lại pipeline
-// trên ảnh đã nắn.
+// TRẮNG ĐẶC là PHÉP CHIẾU của 4 ô vuông đen góc phiếu; giáo viên kéo ô
+// TRẮNG đè BAO TRỌN ô đen in trên phiếu (drag/snap R2), detector bám
+// chắc thì ô KHOÁ viền xanh. Nút chụp LUÔN bật — chấm thẳng trong isolate
+// (processPhoto có lượt 2 nới lỏng): kết quả ngay (GradeResultScreen R4);
+// đọc không được → snackbar chụp lại (KHÔNG còn màn ghim mốc R4).
 //
 // Quy ước an toàn:
 // - Camera chỉ khởi tạo trên Android/iOS (Platform check) và MỌI lệnh camera
@@ -33,24 +32,22 @@ import '../../data/cv/detection_proof.dart' show saveDetectionProof;
 import '../../data/cv/preview_overlay.dart'
     show CoverMapping, MarkerOverlayCalibration, snapSquareCenters, squareLockStates;
 import '../../data/cv/scan_flow.dart'
-    show GradedScan, UngradedReason, processPhoto;
+    show GradedScan, processPhoto;
 import '../../data/cv/sheet_alignment.dart';
 import '../../data/cv/sheet_render_io.dart' show saveScannedImages;
 import '../../domain/entities/class_room.dart';
 import '../../domain/entities/contest.dart';
 import '../../domain/entities/graded_sheet.dart';
-import '../../domain/entities/sheet_spec.dart';
 import '../../domain/services/sheet_layout.dart';
 import '../state/providers.dart';
-import 'crop_review_screen.dart';
+import 'grade_result_screen.dart';
 
 /// Bề rộng mục tiêu khi lấy mẫu luồng Y (đồng bộ [SheetMarkerDetector]).
 const int _previewTargetWidth = 640;
 
-/// R3 — Feature flag "Chỉnh thủ công": ĐANG TẮT. Nút + luồng ghim tay
-/// (CropReview) vẫn được giữ nguyên implementation (biên dịch + test xanh)
-/// dành cho phiếu MỐC PHAI về sau — bật `true` là nút hiện lại ngay.
-const bool showManualAlignment = false;
+/// R4 — Luồng GHIM MỘC/ghim tay (CropReviewScreen + nút "Chỉnh thủ công")
+/// ẨN TOÀN BỘ theo yêu cầu người dùng: nút chụp LUÔN chấm thẳng (lượt 2
+/// nới lỏng trong `processPhoto`), đọc không được → snackbar chụp lại.
 
 final class ScanScreen extends ConsumerStatefulWidget {
   const ScanScreen({super.key, required this.contestId});
@@ -76,9 +73,10 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   _LiveFrame? _liveMarkers;
 
   /// R2: tâm 4 ô vuông (TỈ LỆ của vùng preview). Thứ tự 1..4 =
-  /// trái-trên → phải-trên → phải-dưới → trái-dưới (như ghim CropReview).
+  /// trái-trên → phải-trên → phải-dưới → trái-dưới (hệ QUAD). Chạy THẲNG
+  /// (chấm ngay, không ghim tay).
   /// R3: vị trí mặc định bám PHÉP CHIẾU mốc góc; kéo tay (R2) vẫn giữ làm
-  /// dự phòng mốc phai — ô đã kéo tắt snap, chụp thiếu mốc → CropReview.
+  /// dự phòng mốc phai — ô sim khớp mốc giúp overlay quad chính xác hơn.
   List<Offset>? _squareCenters;
 
   /// R2: ô còn được snap tự động? Kéo tay xong sẽ tắt snap cho ô đó.
@@ -416,8 +414,8 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     super.dispose();
   }
 
-  /// Chụp ảnh → quét + chấm. Nút chụp LUÔN bật (R1): chụp khi chưa đủ mốc
-  /// vẫn ổn — thiếu mốc sẽ rơi vào màn ghim mốc.
+  /// Chụp ảnh → quét + chấm. Nút chụp LUÔN bật (R1): chấm thẳng trong
+  /// isolate (processPhoto có lượt 2 nới lỏng) — R4 không còn rơi màn ghim.
   Future<void> _capture() async {
     if (_busy || _loading) return;
     final l10n = AppLocalizations.of(context)!;
@@ -441,32 +439,6 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
         overlayQuad: overlay?.$1,
         frameSize: overlay?.$2 ?? const Size(1, 1),
       );
-    } catch (e) {
-      messenger.showSnackBar(
-          SnackBar(content: Text(l10n.scanError(e.toString()))));
-    }
-  }
-
-  /// R2: "Chỉnh thủ công" — chụp ảnh rồi mở màn GHIM MỐC (bỏ phát hiện):
-  /// đường dự phòng cho phiếu mốc phai/nhiều lỗi in.
-  /// R3: ẨN sau feature flag [showManualAlignment] (giữ implementation,
-  /// sẽ bật lại cho phiếu mốc phai — KHÔNG xoá).
-  Future<void> _captureManual() async {
-    if (_busy || _loading) return;
-    final l10n = AppLocalizations.of(context)!;
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      final controller = _controller;
-      if (controller == null || !controller.value.isInitialized) return;
-      try {
-        await controller.stopImageStream();
-      } catch (_) {
-        // ngừng tốt nhất có thể.
-      }
-      final file = await controller.takePicture();
-      final bytes = await file.readAsBytes();
-      if (!mounted) return;
-      await _openCrop(Uint8List.fromList(bytes));
     } catch (e) {
       messenger.showSnackBar(
           SnackBar(content: Text(l10n.scanError(e.toString()))));
@@ -507,12 +479,12 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     }
   }
 
-  /// Quét + chấm ảnh (isolate): đủ mốc → màn kết quả tức thời; thiếu mốc →
-  /// màn ghim 4 ô vuông đen, ghim xong nắn phẳng → chạy lại pipeline.
+  /// Quét + chấm ảnh (isolate): đủ mốc (hoặc lượt 2 nới lỏng dựng nổi khung)
+  /// → MÀN KẾT QUẢ R4; cả 2 lượt rớt → snackbar chụp lại (ở lại camera).
   ///
   /// R2: \[overlayQuad\] + \[frameSize\] = quad ghim ở hệ khung hiển thị
   /// (dự phòng khi detector bó tay); \[knownQuad\] = quad hệ ảnh chụp khi
-  /// biết chắc (ảnh đã nắn từ CropReviewScreen).
+  /// biết chắc (hiếm — đường nắn tay đã ẩn R4).
   Future<void> _process(
     Uint8List bytes, {
     AlignmentQuad? overlayQuad,
@@ -554,10 +526,14 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
       ));
     }
     if (graded == null) {
-      await _openCrop(bytes);
-    } else {
-      await _showResult(graded, captureBytes: bytes);
+      // R4 — KHÔNG còn màn ghim mốc: cả 2 lượt nới lỏng đều không dựng nổi
+      // khung → snackbar hướng dẫn chụp lại, ở lại camera.
+      messenger.showSnackBar(
+        SnackBar(content: Text(l10n.scanSheetUnreadable)),
+      );
+      return;
     }
+    await _showResult(graded);
   }
 
   /// R3 (chỉ DEBUG): annotate ảnh chụp + ghi vào thư mục proof của app
@@ -585,57 +561,37 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     }
   }
 
-  Future<void> _openCrop(Uint8List bytes) async {
+  /// R4: MÀN KẾT QUẢ giống TNMaker (GradeResultScreen — header "Mã đề" +
+  /// điểm, ảnh phiếu nắn phủ vành màu, card "Warning!!!", CHỤP LẠI/GIỮ).
+  /// Screen tự điều hướng: GIỮ → lưu xong pop cả 2 (về chi tiết kỳ thi);
+  /// CHỤP LẠI/back → pop về camera.
+  Future<void> _showResult(GradedScan graded) async {
     if (!mounted) return;
     final contest = _contest;
     if (contest == null) return;
+    // R4: phiếu đã chấm TRƯỚC ĐÓ của kỳ thi — kiểm tra "Trùng SBD" card.
+    List<GradedSheet> previousSheets = const [];
+    try {
+      previousSheets =
+          await ref.read(gradedSheetsByContestProvider(contest.id).future);
+    } catch (_) {
+      // Không lấy được danh sách cũ → coi như không trùng (chỉ là cảnh báo).
+    }
+    if (!mounted) return;
     final layout =
         SheetLayout.forSpec(contest.sheetSpec, page: SheetLayout.standardPage);
-    final rectified = await Navigator.of(context).push<Uint8List>(
-      MaterialPageRoute(
-        builder: (_) => CropReviewScreen(imageBytes: bytes, layout: layout),
-      ),
-    );
-    if (rectified != null) {
-      // R2: ảnh đã nắn về TRANG CHUẨN → 4 mốc góc nằm đúng vị trí chuẩn của
-      // trang; truyền quad trực tiếp để pipeline KHÔNG phát hiện lại (mốc
-      // phai/mất 1 góc vẫn chấm được) — sửa lỗi lặp CropReview ở M3.
-      final c = layout.cornerMarkerCenters;
-      await _process(
-        rectified,
-        knownQuad: AlignmentQuad(c[0], c[1], c[2], c[3]),
-      );
-    }
-  }
-
-  /// R3: thẻ kết quả XUẤT HIỆN NGAY sau chụp (không dialog phụ): đẩy màn
-  /// toàn màn hình _ResultCardScreen; nền = ảnh chụp gốc làm mờ.
-  Future<void> _showResult(GradedScan graded, {Uint8List? captureBytes}) async {
-    if (!mounted) return;
-    final contest = _contest;
-    if (contest == null) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) => _ResultCardScreen(
+        builder: (_) => GradeResultScreen(
           graded: graded,
           contest: contest,
-          backgroundImageBytes: captureBytes,
-          onSave: () async {
-            // R3: _save KHÔNG tự pop nữa — điều hướng do màn card đảm nhiệm:
-            // lưu xong pop thẻ kết quả → pop màn chấm (về chi tiết kỳ thi).
-            final ok = await _save(graded);
-            if (ok && mounted) {
-              Navigator.of(context).pop(); // pop thẻ kết quả
-              Navigator.of(context).pop(); // pop màn chấm → chi tiết kỳ thi
-            }
-          },
-          onScanAnother: () async {
-            Navigator.of(context).pop(); // pop thẻ → về camera
-          },
+          layout: layout,
+          previousSheets: previousSheets,
+          onSave: () => _save(graded),
         ),
       ),
     );
-    // Quay về camera sau "Chụp phiếu khác": mở lại luồng phân tích preview.
+    // Quay về camera sau "CHỤP LẠI"/back: mở lại luồng phân tích preview.
     if (mounted && !_busy) {
       _startMarkerOverlay();
     }
@@ -817,22 +773,8 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
                   : l10n.scanDragHint),
             ),
           ),
-          // R3: "Chỉnh thủ công" ẨN sau feature flag (prompt R3 #4: không xoá —
-          // giữ nút + luồng ghim tay cho phiếu mốc phai, bật lại sau).
-          if (showManualAlignment)
-            Positioned(
-              left: 12,
-              bottom: 160 + safeBottom,
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  backgroundColor: Colors.black45,
-                  foregroundColor: Colors.white,
-                ),
-                icon: const Icon(Icons.center_focus_weak, size: 18),
-                onPressed: _captureManual,
-                label: Text(l10n.scanManualFix),
-              ),
-            ),
+          // R4: nút "Chỉnh thủ công" + toàn luồng GHIM MỐC ẨN theo yêu cầu
+          // (CropReviewScreen giữ nguyên file, không còn được gọi).
           Positioned(
             right: 12,
             bottom: 160 + safeBottom,
@@ -1224,204 +1166,3 @@ final class _FallbackPicker extends StatelessWidget {
   }
 }
 
-/// R3 — THẺ KẾT QUẢ tức thời (màn nguyên màn hình, mô phỏng khung kết quả
-/// của app tham khảo — phong cách original Dart): nền = ẢNH CHỤP GỐC làm
-/// mờ tối; card trắng góc bo với tiêu đề "Kết quả phiếu", điểm TO
-/// "Điểm: x/10", dòng "N câu đúng • M sai • K bỏ trống", phần thông tin
-/// SBD/Mã đề/Học sinh; 2 nút "Lưu kết quả" (primary) và "Chụp phiếu khác"
-/// (secondary). QUY TẮC R2 giữ nguyên: card nổi HOÀN TOÀN trên thanh nav
-/// Android (SafeArea + viewPadding), NULL "NULL (Không có mã đề)" /
-/// "(Không có số báo danh)" bỏ chấm và hiển thị lý do.
-final class _ResultCardScreen extends StatefulWidget {
-  const _ResultCardScreen({
-    required this.graded,
-    required this.contest,
-    required this.onSave,
-    required this.onScanAnother,
-    this.backgroundImageBytes,
-  });
-
-  final GradedScan graded;
-  final Contest contest;
-  final VoidCallback onSave; // R3: callback caller điều hướng sau khi lưu.
-  final VoidCallback onScanAnother;
-  final Uint8List? backgroundImageBytes;
-
-  @override
-  State<_ResultCardScreen> createState() => _ResultCardScreenState();
-}
-
-final class _ResultCardScreenState extends State<_ResultCardScreen> {
-  bool _saving = false;
-
-  String _scoreText(double score) =>
-      score % 1 == 0 ? score.toStringAsFixed(0) : score.toString();
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final graded = widget.graded;
-    final contest = widget.contest;
-    final result = graded.result;
-    final scan = graded.photo.scan;
-    final studentName = graded.student?.fullName ?? l10n.resultStudentNotFound;
-    final bgBytes = widget.backgroundImageBytes;
-    // R2: giữ nguyên quy tắc — card phải nổi trên cả viewPadding (nav bar).
-    final bottomInset = MediaQuery.of(context).viewPadding.bottom;
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          // Nền: ảnh chụp gốc làm mờ (mất nét nhẹ + phủ tối 55%) — nếu không
-          // có bytes (luồng hiếm) nền xám than trơn.
-          if (bgBytes != null)
-            Opacity(
-              opacity: 0.45,
-              child: Image.memory(
-                bgBytes,
-                fit: BoxFit.cover,
-                alignment: Alignment.topCenter,
-              ),
-            )
-          else
-            ColoredBox(color: const Color(0xFF26262B)),
-          Align(
-            alignment: Alignment.center,
-            child: SingleChildScrollView(
-              padding: EdgeInsets.fromLTRB(20, 24, 20, 24 + bottomInset),
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: const [
-                    BoxShadow(blurRadius: 24, color: Colors.black54),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      l10n.resultTitle,
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.w700),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 12),
-                    // R2: phiếu BỎ chấm (lưới mã đề/SBD trống) → điểm "NULL"
-                    // + lý do, KHÔNG có dòng thống kê đúng/sai (chưa hề chấm).
-                    if (!graded.graded) ...[
-                      Text(
-                        l10n.resultNullScore,
-                        style: Theme.of(context)
-                            .textTheme
-                            .displaySmall
-                            ?.copyWith(fontWeight: FontWeight.w800),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        graded.ungradedReason == UngradedReason.examCode
-                            ? l10n.resultNoExamCode
-                            : l10n.resultNoStudentCode,
-                        style: Theme.of(context).textTheme.bodyMedium,
-                        textAlign: TextAlign.center,
-                      ),
-                    ] else ...[
-                      Text(
-                        l10n.resultScore(
-                            _scoreText(result.score), _scoreText(contest.maxScore)),
-                        style: Theme.of(context)
-                            .textTheme
-                            .displaySmall
-                            ?.copyWith(fontWeight: FontWeight.w800),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        l10n.resultStats(result.correctCount,
-                            result.incorrectCount, result.unansweredCount),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                    const SizedBox(height: 16),
-                    _ResultRow(
-                        l10n.resultStudentCodeLabel,
-                        scan.studentCodeEmpty ? '—' : scan.studentCodeRaw),
-                    _ResultRow(l10n.resultExamCodeLabel,
-                        graded.usedExamCode.isEmpty ? '—' : graded.usedExamCode),
-                    _ResultRow(l10n.resultStudentLabel, studentName),
-                    if (graded.usedBestGuessKey) ...[
-                      const SizedBox(height: 8),
-                      Text(l10n.resultBestGuessNote,
-                          style: Theme.of(context).textTheme.bodySmall),
-                    ],
-                    if (contest.formType == SheetFormType.ministry &&
-                        result.partScores.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Text(l10n.detailPartScoresTitle,
-                          style: Theme.of(context).textTheme.titleMedium),
-                      for (final entry in result.partScores.entries)
-                        Text(l10n.partScoreLine(
-                            entry.key, _scoreText(entry.value))),
-                    ],
-                    const SizedBox(height: 20),
-                    FilledButton.icon(
-                      icon: _saving
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Icon(Icons.save_outlined),
-                      label: Text(l10n.resultSave),
-                      onPressed: _saving ? null : () {
-                        setState(() => _saving = true);
-                        widget.onSave();
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.camera_alt_outlined),
-                      label: Text(l10n.resultScanAnother),
-                      onPressed: _saving ? null : widget.onScanAnother,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Dòng nhãn — giá trị trong sheet kết quả.
-final class _ResultRow extends StatelessWidget {
-  const _ResultRow(this.label, this.value);
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Text('$label: '),
-          Expanded(
-            child: Text(value,
-                style: const TextStyle(fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
-  }
-}
