@@ -199,20 +199,58 @@ final class OmrScanService {
       }
     }
     if (quad == null) return null;
-    final warped = warper.warpRectify(
-      imageBytes,
-      quad: quad,
-      targetQuad: targetQuad,
-      outputSize: layout.page,
-    );
-    // R3 — KIỂM CHỨNG ROUND-TRIP: ảnh đã nắn phải tái-detect được CẢ 4 mốc
-    // góc trong ≤ 6 px trang chuẩn. Góc nào lệch ⇒ coi như phiếu chưa căn
-    // đúng (warp rác/pin nhắm) → null → UI rơi CropReviewScreen, KHÔNG chấm
-    // một phiếu có thể sai lattice. knownQuad (ảnh đã ghim tay từ CropReview)
-    // được miễn kiểm — tránh vòng lặp với mốc phai.
+    Uint8List warped;
     WarpedMarkerCheck? verification;
-    if (knownQuad == null) {
+    if (knownQuad != null) {
+      // knownQuad (ảnh đã ghim tay từ CropReview): miễn kiểm — tránh vòng
+      // lặp với mốc phai.
+      warped = warper.warpRectify(
+        imageBytes,
+        quad: quad,
+        targetQuad: targetQuad,
+        outputSize: layout.page,
+      );
+    } else {
+      warped = warper.warpRectify(
+        imageBytes,
+        quad: quad,
+        targetQuad: targetQuad,
+        outputSize: layout.page,
+      );
+      // R3 — KIỂM CHỨNG ROUND-TRIP: ảnh đã nắn phải tái-detect được CẢ 4 mốc
+      // góc trong ≤ 6 px trang chuẩn. Góc nào lệch ⇒ coi như phiếu chưa căn
+      // đúng (warp rác/pin nhắm) → null → UI rơi CropReviewScreen, KHÔNG chấm
+      // một phiếu có thể sai lattice.
       verification = verifyWarpedMarkers(warped, layout: layout);
+      // R3.1 (màn NGANG): detector gán nhãn tl/tr/br/bl theo TRỤC ẢNH decode;
+      // ảnh chụp ngang khiến quad đúng VỊ TRÍ nhưng NHÃN lệch 90° ⇒ warp sai
+      // chiều ⇒ kiểm chứng rớt. Khi có vị trí GHIM từ preview, phân định
+      // hướng qua ĐIỂM TỐI của mốc thật rồi thử lại — lượt đạt kiểm chứng
+      // mới được dùng.
+      if (!verification.passed && overlayQuad != null) {
+        final alt = _resolveOverlayQuad(
+          imageBytes,
+          overlayQuad: overlayQuad,
+          frameSize: frameSize,
+          layout: layout,
+          targetQuad: targetQuad,
+        );
+        if (alt != null) {
+          final altWarped = warper.warpRectify(
+            imageBytes,
+            quad: alt,
+            targetQuad: targetQuad,
+            outputSize: layout.page,
+          );
+          final altVerification =
+              verifyWarpedMarkers(altWarped, layout: layout);
+          if (altVerification.passed) {
+            quad = alt;
+            warped = altWarped;
+            verification = altVerification;
+          }
+        }
+      }
       if (!verification.passed) return null;
     }
     final scanResult = scan(warped, layout: layout, spec: spec, tuning: tuning);
@@ -228,11 +266,12 @@ final class OmrScanService {
 
   /// R2 — Phân định hướng ảnh và trả về quad theo hệ PIXEL ẢNH.
   ///
-  /// [overlayQuad] do giáo viên ghim theo hệ KHUNG HIỂN THỊ (dọc, đúng thứ
-  /// tự tl→tr→br→bl). Ảnh decode có thể đang nằm ngang (sensor) hoặc dọc —
-  /// chiến lược:
-  ///   1. Đọc kích thước ảnh → các biến thể hướng HỢP LỆ:
-  ///      dọc: (thẳng, xoay 180°); ngang: (xoay CW, xoay CCW).
+  /// [overlayQuad] do giáo viên ghim theo hệ KHUNG HIỂN THỊ (đúng thứ
+  /// tự tl→tr→br→bl theo hướng màn hiện hành — R3.1: có thể là màn NGANG).
+  /// Ảnh decode có thể đang lệch trục với khung — chiến lược:
+  ///   1. Đọc kích thước ảnh và kích thước khung → so TRỤC:
+  ///      cùng trục (dọc↔dọc / ngang↔ngang) → biến thể (thẳng, xoay 180°);
+  ///      khác trục → biến thể (xoay CW, xoay CCW).
   ///   2. Từng biến thể: warp BẢN THU NHỎ về trang chuẩn rồi đo ĐỘ TỐI
   ///      tại 12 mốc in sẵn — biến thể đúng → mốc tối rõ (giấy trắng).
   ///   3. Trả quad biến thể tối nhất; không biến thể nào đạt ngưỡng
@@ -263,18 +302,23 @@ final class OmrScanService {
         [for (final p in points) map(p)];
 
     final variants = <List<Offset>>[];
-    if (size.height >= size.width) {
-      // Ảnh decode dọc, hiển thị dọc → dò (thẳng) và (xoay 180°).
+    // R3.1: QUYẾT TRỤC bằng cách so HƯỚNG ảnh ↔ HƯỚNG KHUNG ghim (không
+    // mặc định màn dọc nữa): cùng trục → thẳng/180; khác trục → CW/CCW.
+    final imagePortrait = size.height >= size.width;
+    final framePortrait = fh >= fw;
+    if (imagePortrait == framePortrait) {
+      // Cùng trục: dò (thẳng) và (xoay 180°).
       variants.add(mapTo((f) => Offset(f.dx * size.width, f.dy * size.height)));
       variants.add(mapTo((f) => Offset(
             (1 - f.dx) * size.width,
             (1 - f.dy) * size.height,
           )));
     } else {
-      // Ảnh decode ngang (sensor), hiển thị dọc:
+      // Ảnh HOÁN ĐỔI trục khung (khung dọc + ảnh ngang, hoặc khung ngang +
+      // ảnh dọc): hiển thị = xoay ±90°:
       //  • hiển thị = xoay CW của ảnh: (a, b) → (u = b, v = 1 - a)
       //  • hiển thị = xoay CCW của ảnh: (a, b) → (u = 1 - b, v = a)
-      //  với (a, b) là tỉ lệ khung dọc, (u, v) là tỉ lệ ảnh ngang.
+      //  với (a, b) là tỉ lệ khung, (u, v) là tỉ lệ ảnh.
       variants.add(mapTo((f) =>
           Offset(f.dy * size.width, (1 - f.dx) * size.height)));
       variants.add(mapTo((f) =>

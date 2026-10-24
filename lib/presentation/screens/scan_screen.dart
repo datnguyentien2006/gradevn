@@ -23,6 +23,7 @@ import 'package:camera/camera.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemChrome, DeviceOrientation;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gradevn/l10n/generated/app_localizations.dart';
 import 'package:path/path.dart' as p;
@@ -108,15 +109,17 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   /// được quanh vị trí mặc định này. Ô KHÔNG có số bên trong (y hệt
   /// TNMaker) — chỉ là mục tiêu căn phiếu.
 
-  /// R3: kích thước khung ô overlay theo calibration (tỉ lệ preview).
+  /// R3: kích thước khung ô overlay theo calibration HƯỚNG-THỨC
+  /// ([MarkerOverlayCalibration.forArea]) — tự dùng bản ngang khi màn ngang.
   Size get _markerBoxSize {
     final area = _previewArea;
     if (area.width <= 0 || area.height <= 0) {
       return const Size(60, 78);
     }
+    final cal = MarkerOverlayCalibration.forArea(area);
     return Size(
-      MarkerOverlayCalibration.widthFraction * area.width,
-      MarkerOverlayCalibration.heightFraction * area.height,
+      cal.widthFraction * area.width,
+      cal.heightFraction * area.height,
     );
   }
 
@@ -144,6 +147,15 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   @override
   void initState() {
     super.initState();
+    // R3.1 (TNMaker, xác thực 2026-10-24): màn chụp chạy ở HƯỚNG NGANG —
+    // cảm biến camera vốn nằm ngang; hiển thị trên màn dọc 2.17:1 làm preview
+    // bị BÓP dọc ~1.6× (hình không khớp thực tế). Màn ngang khớp khổ buffer
+    // (sai lệch còn ~1.2×) — đúng cách TNMaker làm. Khi rời màn chụp,
+    // `dispose` trả về chế độ dọc như trước.
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     _loadData();
     _initCamera();
   }
@@ -254,7 +266,9 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     // R2: toàn bộ việc lấy mẫu kênh Y chạy TRONG isolate — thread UI không
     // quét pixel nữa, chỉ gửi nguyên khung bytes (~<1 MB) đi.
     final bytes = Uint8List.sublistView(y.bytes);
-    Isolate.run(() => _analyzeMarkerFrame(bytes, stride, width, height))
+    // R3.1: màn chụp đã KHOÁ NGANG (initState) → khung thẳng khớp màn.
+    Isolate.run(() => _analyzeMarkerFrame(bytes, stride, width, height,
+        landscapeDisplay: true))
         .then((frame) {
       if (_analyzing) {
         _analyzing = false;
@@ -310,14 +324,17 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
 
   /// Hàm top-level cho isolate (R2): lấy mẫu kênh Y về bề rộng
   /// [_previewTargetWidth], rồi chạy detector trên CẢ HAI phương hướng
-  /// (thẳng / xoay 90°) vì buffer sensor có thể nằm ngang. Chọn phương
-  /// hướng mà QUAD nội dung DỰNG ĐỨNG (bbox cao > rộng — phiếu dựng đứng
-  /// trên preview dọc) để overlay khớp màn hình.
+  /// (thẳng / xoay 90°) vì buffer sensor có thể không khớp hướng màn.
+  /// R3.1: chọn phương hướng theo HƯỚNG MÀN — màn [landscapeDisplay]:
+  /// khung thẳng khớp màn ngang (sensor ∥ màn); màn dọc: khung xoay 90°
+  /// (sensor ngang + màn dọc là phổ biến). Chọn phương hướng mà QUAD nội
+  /// dung DỰNG ĐỨNG theo hướng màn để overlay khớp màn hình.
   ///
   /// Trả về `_LiveFrame` với ứng viên mốc theo TỈ LỆ khung đã chọn;
   /// không phương hướng nào đạt → null (UI không snap, chụp dùng detector).
   static _LiveFrame? _analyzeMarkerFrame(
-      Uint8List planeBytes, int stride, int width, int height) {
+      Uint8List planeBytes, int stride, int width, int height,
+      {bool landscapeDisplay = false}) {
     final f = (width ~/ _previewTargetWidth).clamp(1, width);
     final dw = width ~/ f;
     final dh = height ~/ f;
@@ -344,7 +361,9 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     // Quy đổi ứng viên theo TỈ LỆ khung đã chọn (độc lập với f lấy mẫu).
     _LiveFrame? build(MarkerDetection det, int fw, int fh) {
       if (det.quad == null) return null;
-      if (!_portraitBox(det.quad!)) return null; // nội dung không dựng đứng
+      if (!_uprightBox(det.quad!, landscapeDisplay)) {
+        return null; // nội dung không dựng đứng theo hướng màn
+      }
       Offset frac(Offset p) => Offset(
             (p.dx / fw).clamp(0.0, 1.0).toDouble(),
             (p.dy / fh).clamp(0.0, 1.0).toDouble(),
@@ -366,21 +385,32 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
       );
     }
 
-    // Ưu tiên hướng XOAY (sensor ngang + màn dọc là phổ biến), rồi hướng thấp.
+    // Ưu tiên khung khớp HƯỚNG MÀN (R3.1): màn ngang → thẳng trước (buffer
+    // ngang ∥ màn ngang); màn dọc → xoay trước (sensor ngang + màn dọc).
+    if (landscapeDisplay) {
+      return build(straight, dw, dh) ?? build(rot, dh, dw);
+    }
     return build(rot, dh, dw) ?? build(straight, dw, dh);
   }
 
-  /// Bbox của quad có thảo (cao > rộng) — nội dung dựng đứng theo trục ảnh.
-  static bool _portraitBox(AlignmentQuad quad) {
+  /// Bbox của quad có khớp HƯỚNG MÀN để nội dung "dựng đứng" trên preview:
+  /// màn dọc → phiếu dựng đứng ⇒ bbox CAO > RỘNG; màn ngang → phiếu nằm
+  /// NGANG theo khung màn (cùng tư thế đọc phiếu của TNMaker) ⇒ bbox
+  /// RỘNG > CAO.
+  static bool _uprightBox(AlignmentQuad quad, bool landscapeDisplay) {
     final xs = <double>[quad.tl.dx, quad.tr.dx, quad.br.dx, quad.bl.dx];
     final ys = <double>[quad.tl.dy, quad.tr.dy, quad.br.dy, quad.bl.dy];
     final w = xs.reduce(math.max) - xs.reduce(math.min);
     final h = ys.reduce(math.max) - ys.reduce(math.min);
-    return h > w;
+    return landscapeDisplay ? w > h : h > w;
   }
 
   @override
   void dispose() {
+    // R3.1: trả về hướng DỌC mặc định của app (các màn khác thiết kế cho dọc).
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]);
     _controller?.dispose();
     super.dispose();
   }
@@ -825,7 +855,7 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     final area = _previewArea;
     if (_squareCenters == null && area.width > 0) {
       _squareCenters = <Offset>[
-        ...MarkerOverlayCalibration.centerFractions,
+        ...MarkerOverlayCalibration.forArea(area).centerFractions,
       ];
     }
     final centers = _squareCenters;

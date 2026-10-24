@@ -192,24 +192,25 @@ void main() {
   });
 
   group('MarkerOverlayCalibration (y hệt TNMaker, toàn màn dọc 720×1560)', () {
+    final portrait = MarkerOverlayCalibration.portrait;
     test('cỡ ô = 157/720 × width, 203/1560 × height (khung đo thực tế)', () {
-      expect(MarkerOverlayCalibration.widthFraction, closeTo(157 / 720, 1e-6));
-      expect(MarkerOverlayCalibration.heightFraction, closeTo(203 / 1560, 1e-6));
+      expect(portrait.widthFraction, closeTo(157 / 720, 1e-6));
+      expect(portrait.heightFraction, closeTo(203 / 1560, 1e-6));
       // Tỉ lệ độc lập với đơn vị preview:
       // preview 720×1560 → ô đúng bằng px đo gốc.
-      final w1 = MarkerOverlayCalibration.widthFraction * 720;
-      final h1 = MarkerOverlayCalibration.heightFraction * 1560;
+      final w1 = portrait.widthFraction * 720;
+      final h1 = portrait.heightFraction * 1560;
       expect(w1, closeTo(157, 1e-6));
       expect(h1, closeTo(203, 1e-6));
       // Preview khác kích thước → cùng tỉ lệ nhân lên.
-      final w2 = MarkerOverlayCalibration.widthFraction * 360;
-      final h2 = MarkerOverlayCalibration.heightFraction * 780;
+      final w2 = portrait.widthFraction * 360;
+      final h2 = portrait.heightFraction * 780;
       expect(w2, closeTo(78.5, 1e-6));
       expect(h2, closeTo(101.5, 1e-6));
     });
 
     test('4 tâm khớp 4 khung ô đã đo (tl, tr, br, bl), đối xứng', () {
-      final centers = MarkerOverlayCalibration.centerFractions;
+      final centers = portrait.centerFractions;
       expect(centers.length, 4);
       // Tâm include-bounds: tl [0..156]×[64..266] → (78.5, 165.5).
       expect(centers[0].dx, closeTo(78.5 / 720, 1e-6));
@@ -234,7 +235,7 @@ void main() {
 
     test('lề trên 64 px & hàng dưới kết thúc 1177 (nhường dưới cho nút chụp)',
         () {
-      final centers = MarkerOverlayCalibration.centerFractions;
+      final centers = portrait.centerFractions;
       // Tâm hàng trên ×1560 − 101.5 = 64 (biên trên ô).
       expect(centers[0].dy * 1560 - 203 / 2, closeTo(64, 1e-6));
       // Tâm hàng dưới ×1560 + 101.5 = 1178 (biên dưới exclusive; 1177 là
@@ -246,14 +247,59 @@ void main() {
     });
 
     test('trong khoảng [0,1] và ô không lọt lề ngoài không gian đo', () {
-      final centers = MarkerOverlayCalibration.centerFractions;
-      for (final c in centers) {
+      for (final c in portrait.centerFractions) {
         expect(c.dx, inExclusiveRange(0.0, 1.0));
         expect(c.dy, inExclusiveRange(0.0, 1.0));
       }
-      expect(MarkerOverlayCalibration.widthFraction, lessThan(0.25));
-      expect(MarkerOverlayCalibration.heightFraction, lessThan(0.25));
+      expect(portrait.widthFraction, lessThan(0.25));
+      expect(portrait.heightFraction, lessThan(0.25));
     });
-  },
-  );
+  });
+
+  group('MarkerOverlayCalibration — bản NGANG (màn chụp R3.1)', () {
+    final landscape = MarkerOverlayCalibration.landscape;
+    test('cỡ ô transpose: 203/1560 × width, 157/720 × height', () {
+      expect(landscape.widthFraction, closeTo(203 / 1560, 1e-6));
+      expect(landscape.heightFraction, closeTo(157 / 720, 1e-6));
+      // 1560×720 → ô đo gốc đúng 203×157 px.
+      expect(landscape.widthFraction * 1560, closeTo(203, 1e-6));
+      expect(landscape.heightFraction * 720, closeTo(157, 1e-6));
+    });
+
+    test('4 tâm = transpose của bảng dọc (cùng vị trí vật lý trên màn)', () {
+      final centers = landscape.centerFractions;
+      // Cột ô: 64..266 (tâm 165.5) và 974..1177 (tâm 1076.5);
+      // hàng ô: 0..156 (tâm 78.5) và 563..719 (tâm 641.5).
+      expect(centers[0].dx, closeTo(165.5 / 1560, 1e-6));
+      expect(centers[0].dy, closeTo(78.5 / 720, 1e-6));
+      expect(centers[1].dx, closeTo(1076.5 / 1560, 1e-6));
+      expect(centers[1].dy, closeTo(78.5 / 720, 1e-6));
+      expect(centers[2].dx, closeTo(1076.5 / 1560, 1e-6));
+      expect(centers[2].dy, closeTo(641.5 / 720, 1e-6));
+      expect(centers[3].dx, closeTo(165.5 / 1560, 1e-6));
+      expect(centers[3].dy, closeTo(641.5 / 720, 1e-6));
+      // Hàng trên/dưới SÁT MÉP ngang (như ảnh tham chiếu ngang), cột lệch
+      // trong đúng số px đã đo.
+      expect(centers[0].dy * 720 - 157 / 2, closeTo(0, 1e-6));
+      expect(centers[2].dy * 720 + 157 / 2, closeTo(720, 1e-6));
+      expect(centers[0].dx * 1560 - 203 / 2, closeTo(64, 1e-6));
+      expect(centers[1].dx * 1560 + 203 / 2, closeTo(1178, 1e-6));
+    });
+
+    test('forArea chọn đúng hướng (ngang ↔ landscape, dọc ↔ portrait)', () {
+      expect(MarkerOverlayCalibration.forArea(const Size(1560, 720)),
+          same(MarkerOverlayCalibration.landscape));
+      expect(MarkerOverlayCalibration.forArea(const Size(720, 1560)),
+          same(MarkerOverlayCalibration.portrait));
+    });
+
+    test('trong khoảng [0,1] và ô không lọt lề ngoài không gian đo', () {
+      for (final c in landscape.centerFractions) {
+        expect(c.dx, inExclusiveRange(0.0, 1.0));
+        expect(c.dy, inExclusiveRange(0.0, 1.0));
+      }
+      expect(landscape.widthFraction, lessThan(0.25));
+      expect(landscape.heightFraction, lessThan(0.25));
+    });
+  });
 }

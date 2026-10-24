@@ -133,8 +133,11 @@ List<bool> squareLockStates(
 }
 
 /// R3 — CALIBRATION THỰC ĐỊA của 4 ô overlay trên màn CAMERA (2026-10-24,
-/// đối chiếu KHUNG so le với ảnh tham chiếu TNMaker đã xoay về dọc — không
-/// gian TOÀN MÀN DỌC 720 × 1560 px):
+/// đối chiếu ảnh tham chiếu TNMaker — đo trong không gian TOÀN MÀN DỌC
+/// 720 × 1560 px; `landscape` là phép transpose chính xác cho màn NGANG
+/// — cùng vị trí vật lý trên màn, chỉ đổi trục):
+///
+/// **Dọc (portrait)** — không gian 720 × 1560:
 ///
 /// | Vị trí     | x (trái→phải) | y (trên→dưới) | Kích thước |
 /// |------------|---------------|---------------|-----------:|
@@ -143,57 +146,99 @@ List<bool> squareLockStates(
 /// | Dưới-trái  | 0 → 156       | 974 → 1177    | 157 × 203  |
 /// | Dưới-phải  | 563 → 719     | 974 → 1177    | 157 × 203  |
 ///
+/// **Ngang (landscape)** — không gian 1560 × 720 (transpose của bảng trên,
+/// cùng vị trí vật lý trên màn): ô 203 × 157; cột ô x = 64 → 266 và
+/// 974 → 1177; hàng ô y = 0 → 156 (sát mép trên) và 563 → 719 (sát mép dưới).
+///
 /// Biên INCLUSIVE (719 = 720 − 1, 1177 = đáy hàng dưới); lề trên 64 px =
-/// đúng cao độ thanh trạng thái (khung không bị che); lề dưới trong lòng
-/// màn 383 px chính là khoảng NHƯỜNG cho nút chụp/hint/gallery. KHUNG Ô
-/// KHÔNG CÓ SỐ (yêu cầu: y hệt TNMaker — ô chỉ là mục tiêu căn phiếu).
+/// đúng cao độ thanh trạng thái (khung không bị che); khoảng NHƯỜNG cho
+/// nút chụp/hint/gallery nằm ở phía còn lại của màn. KHUNG Ô KHÔNG CÓ SỐ
+/// (yêu cầu: y hệt TNMaker — ô chỉ là mục tiêu căn phiếu).
 ///
-/// Ghi chú hướng camera: TNMaker chụp NGANG, GradeVN giữ DỌC vì phiếu
-/// GradeVN là A4 DỌC (dọc lấp đầy khung, mốc ở 4 góc trên/dưới; cảm biến vốn
-/// nằm ngang nên dọc/ngang không đổi FOV/độ phân giải). Số liệu dưới đây là
-/// hình học TRÊN MÀN DỌC (ngang TNMaker xoay 90°) để nhân bản 1-1.
-///
-/// Mọi giá trị lưu dưới dạng TỈ LỆ (0..1) của vùng preview để áp dụng cho
-/// mọi kích thước màn hình.
+/// Ghi chú hướng camera: TNMaker chụp NGANG — xác thực 2026-10-24 cho thấy
+/// preview NGANG khớp thực tế (màn ngang ~1.2× lệch so với buffer ngang)
+/// trong khi màn DỌC bị bóp ~1.6×. GradeVN chuyển màn chụp sang NGANG
+/// (SystemChrome) và dùng `landscape` calibration; `portrait` giữ làm tham
+/// chiếu cùng hệ toạ độ màn dọc. Mọi giá trị lưu TỈ LỆ (0..1) của vùng
+/// preview để áp dụng cho mọi kích thước màn hình.
 final class MarkerOverlayCalibration {
-  const MarkerOverlayCalibration._();
+  const MarkerOverlayCalibration._({
+    required this.measureWidth,
+    required this.measureHeight,
+    required this.boxWidthPx,
+    required this.boxHeightPx,
+    required this.innerLeft,
+    required this.innerTop,
+    required this.innerRight,
+    required this.innerBottom,
+  });
 
-  /// Không gian đo gốc (px thiết bị, toàn màn dọc).
-  static const double measureWidth = 720;
-  static const double measureHeight = 1560;
+  final double measureWidth;
+  final double measureHeight;
+  final double boxWidthPx;
+  final double boxHeightPx;
 
-  /// Vùng phủ của 4 ô: mép trái/phải SÁT MÉP (0 và 719); hàng trên bắt đầu
-  /// 64 (= status bar); hàng dưới kết thúc ở 1177 (nhường dưới cho nút chụp).
-  static const double _innerLeft = 0;
-  static const double _innerTop = 64;
-  static const double _innerRight = 719;
-  static const double _innerBottom = 1177;
+  /// Biên phủ của nhóm 4 ô trong không gian đo (biên INCLUSIVE):
+  /// mép trái nhóm ô, mép trên, mép phải, mép dưới.
+  final double innerLeft;
+  final double innerTop;
+  final double innerRight;
+  final double innerBottom;
 
-  /// Cỡ ô đo được (px không gian đo), hợp nhất đối xứng.
-  static const double _boxWidth = 157;
-  static const double _boxHeight = 203;
+  /// DỌC — đo từ ảnh tham chiếu TNMaker xoay về dọc (720 × 1560).
+  static final MarkerOverlayCalibration portrait = const
+      MarkerOverlayCalibration._(
+    measureWidth: 720,
+    measureHeight: 1560,
+    boxWidthPx: 157,
+    boxHeightPx: 203,
+    innerLeft: 0,
+    innerTop: 64,
+    innerRight: 719,
+    innerBottom: 1177,
+  );
 
-  /// Cỡ ô theo tỉ lệ vùng preview: width × [widthFraction],
+  /// NGANG — transpose chính xác của [portrait] (1560 × 720): cùng vị trí
+  /// vật lý của 4 ô trên màn hình vật lý; preview ngang khớp buffer.
+  static final MarkerOverlayCalibration landscape = const
+      MarkerOverlayCalibration._(
+    measureWidth: 1560,
+    measureHeight: 720,
+    boxWidthPx: 203,
+    boxHeightPx: 157,
+    innerLeft: 64,
+    innerTop: 0,
+    innerRight: 1177,
+    innerBottom: 719,
+  );
+
+  /// Chọn calibration theo HƯỚNG vùng preview hiện hành (screen shape).
+  static MarkerOverlayCalibration forArea(Size area) =>
+      area.width >= area.height ? landscape : portrait;
+
+  /// Không gian đo gốc.
+  Size get measureSize => Size(measureWidth, measureHeight);
+
+  /// Cỡ ô theo TỈ LỆ vùng preview: width × [widthFraction],
   /// height × [heightFraction].
-  static double get widthFraction => _boxWidth / measureWidth; // ≈ 0.2181
-  static double get heightFraction => _boxHeight / measureHeight; // ≈ 0.1301
+  double get widthFraction => boxWidthPx / measureWidth;
+  double get heightFraction => boxHeightPx / measureHeight;
 
-  /// Toạ độ tâm chuẩn hoá (px không gian đo / kích thước không gian đo).
-  static double _fracX(double px) => px / measureWidth;
-  static double _fracY(double py) => py / measureHeight;
+  /// Toạ độ tâm chuẩn hoá: quy về [0,1] của không gian đo.
+  double _fracX(double px) => px / measureWidth;
+  double _fracY(double py) => py / measureHeight;
 
   /// Tâm 4 ô overlay theo TỈ LỆ vùng preview, thứ tự tl, tr, br, bl
-  /// (giống [SheetLayout.cornerMarkerCenters]). Tâm = biên trái + cỡ/2
-  /// (hệ toạ độ liên tục của vùng preview).
-  static List<Offset> get centerFractions => [
-        Offset(_fracX(_innerLeft + _boxWidth / 2), // tl
-            _fracY(_innerTop + _boxHeight / 2)),
-        Offset(_fracX((_innerRight + 1) - _boxWidth / 2), // tr
-            _fracY(_innerTop + _boxHeight / 2)),
-        Offset(_fracX((_innerRight + 1) - _boxWidth / 2), // br
-            _fracY((_innerBottom + 1) - _boxHeight / 2)),
-        Offset(_fracX(_innerLeft + _boxWidth / 2), // bl
-            _fracY((_innerBottom + 1) - _boxHeight / 2)),
+  /// (khi hiển thị theo hướng thật của màn). Tâm = biên trái + cỡ/2.
+  List<Offset> get centerFractions => [
+        Offset(_fracX(innerLeft + boxWidthPx / 2), // tl
+            _fracY(innerTop + boxHeightPx / 2)),
+        Offset(_fracX((innerRight + 1) - boxWidthPx / 2), // tr
+            _fracY(innerTop + boxHeightPx / 2)),
+        Offset(_fracX((innerRight + 1) - boxWidthPx / 2), // br
+            _fracY((innerBottom + 1) - boxHeightPx / 2)),
+        Offset(_fracX(innerLeft + boxWidthPx / 2), // bl
+            _fracY((innerBottom + 1) - boxHeightPx / 2)),
       ];
 }
 
