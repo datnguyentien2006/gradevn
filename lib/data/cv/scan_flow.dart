@@ -6,9 +6,10 @@
 // - [processPhoto]: bọc [gradeScan] trong `Isolate.run` để pipeline đo mật độ
 //   (tốn CPU) không treo thread UI khi chụp thật.
 
+import 'dart:async';
 import 'dart:isolate';
-import 'dart:typed_data';
-import 'dart:ui' show Size;
+import 'package:flutter/foundation.dart';
+import 'dart:ui' show Rect, Size, Image, ImageByteFormat, decodeImageFromList;
 
 import '../../domain/entities/contest.dart';
 import '../../domain/entities/class_room.dart';
@@ -184,10 +185,12 @@ final class _ScanJob {
     required this.keys,
     required this.candidateStudents,
     required this.tuning,
-    this.overlayQuad,
+    this.overlayRects,
     this.overlayFrameSize = const Size(1, 1),
+    this.overlayQuad,
     this.knownQuad,
     this.relaxed = false,
+    this.predecoded,
   });
 
   final Uint8List bytes;
@@ -195,6 +198,15 @@ final class _ScanJob {
   final List<AnswerKey> keys;
   final List<Student> candidateStudents;
   final OmrTuning tuning;
+
+  /// R17: RGBA đã decode SẴN bằng Skia ở isolate chính (xem [_skiaPredecode])
+  /// — bơm thẳng vào scanPhoto, bỏ 715ms decode Dart (log22).
+  final ({Uint8List rgba, int width, int height})? predecoded;
+
+  /// R5: 4 ô HÌNH CHỮ NHẬT giáo viên căn trên preview — TOÀN BỘ DIỆN TÍCH
+  /// từng ô là vùng nhận diện mốc (tỉ lệ khung hiển thị 0..1). Ưu tiên cao
+  /// nhất: quét blob đen trong ô trước khi chạy detector toàn ảnh.
+  final List<Rect>? overlayRects;
 
   /// R2: quad giáo viên ghim trên preview (hệ KHUNG HIỂN THỊ) + khung đó.
   final AlignmentQuad? overlayQuad;
@@ -211,16 +223,24 @@ final class _ScanJob {
 
 /// Thân isolate: quét ảnh → chấm. Hàm top-level (isolate không gửi method).
 GradedScan? _scanAndGrade(_ScanJob job) {
+  // TEMPDBG
+  debugPrint('DBG scanAndGrade: relaxed=${job.relaxed} '
+      'rects=${job.overlayRects} frame=${job.overlayFrameSize} '
+      'overlayQuad=${job.overlayQuad != null} knownQuad=${job.knownQuad != null}');
   final photo = const OmrScanService().scanPhoto(
     job.bytes,
     spec: job.contest.sheetSpec,
     tuning: job.tuning,
+    overlayRects: job.overlayRects,
     overlayQuad: job.overlayQuad,
     frameSize: job.overlayFrameSize,
     knownQuad: job.knownQuad,
     skipVerification: job.relaxed,
     overlayMinQuality: job.relaxed ? 0.35 : _defaultOverlayMinQuality,
+    predecoded: job.predecoded,
   );
+  // TEMPDBG
+  debugPrint('DBG scanAndGrade: photo=${photo == null ? "NULL" : "quad=${photo.quad}, verify=${photo.verification}"}');
   if (photo == null) return null; // khung căn chỉnh không tìm thấy
   return gradeScan(
     contest: job.contest,
@@ -246,16 +266,24 @@ GradedScan? _scanAndGrade(_ScanJob job) {
 /// nới lỏng ngay trong cùng isolate (bỏ kiểm chứng round-trip + hạ ngưỡng
 /// overlay 0.35) — KHÔNG còn rơi về màn ghim mốc thủ công nữa. Chỉ báo lỗi
 /// ở UI mới là "đọc không được phiếu → chụp lại".
+/// R5 — \[overlayRects\]: 4 ô hình chữ nhật giáo viên căn trên preview —
+/// pipeline QUÉT TOÀN DIỆN TÍCH từng ô để tìm mốc (ưu tiên cao nhất), đúng
+/// nguyên tắc "khung chữ nhật là vùng nhận diện ô vuông tô đen".
 Future<GradedScan?> processPhoto(
   Uint8List bytes, {
   required Contest contest,
   required List<AnswerKey> keys,
   required List<Student> candidateStudents,
   OmrTuning tuning = const OmrTuning(),
+  List<Rect>? overlayRects,
   AlignmentQuad? overlayQuad,
   Size frameSize = const Size(1, 1),
   AlignmentQuad? knownQuad,
-}) {
+}) async {
+  // R17: decode bằng DECODER NATIVE của engine (Skia) TRƯỚC lúc cài isolate
+  // — decodeImageFromList chỉ chạy isolate chính, đổi lại nhanh hơn hẳn
+  // decode Dart của package `image` (log22: decode=715ms → đo lần này).
+  final predecoded = await _skiaPredecode(bytes);
   return Isolate.run(() {
     final job = _ScanJob(
       bytes: bytes,
@@ -263,9 +291,11 @@ Future<GradedScan?> processPhoto(
       keys: keys,
       candidateStudents: candidateStudents,
       tuning: tuning,
+      overlayRects: overlayRects,
       overlayQuad: overlayQuad,
       overlayFrameSize: frameSize,
       knownQuad: knownQuad,
+      predecoded: predecoded,
     );
     final normal = _scanAndGrade(job);
     if (normal != null) return normal;
@@ -276,10 +306,12 @@ Future<GradedScan?> processPhoto(
       keys: keys,
       candidateStudents: candidateStudents,
       tuning: tuning,
+      overlayRects: overlayRects,
       overlayQuad: overlayQuad,
       overlayFrameSize: frameSize,
       knownQuad: knownQuad,
       relaxed: true,
+      predecoded: predecoded,
     ));
   });
 }
@@ -287,3 +319,267 @@ Future<GradedScan?> processPhoto(
 /// Ngưỡng overlay mặc định của [OmrScanService] (0.55) — giữ một hằng ở
 /// tầng flow để lượt 1 KHÔNG truyền gì (dùng mặc định) và lượt 2 nới rõ.
 const double _defaultOverlayMinQuality = 0.55;
+
+/// R17 — EXIF Orientation của JPEG (góc 0–8) đọc CHỈ TỪ HEADER (không decode
+/// pixel, vài micro-giây): quét marker APP1 → TIFF header → IFD0 tag 0x0112.
+/// null khi không đọc nổi / không có EXIF.
+///
+/// Lý do phải có: decodeImageFromList (Skia) TỰ ĐỘNG quay ảnh theo EXIF,
+/// còn package `image` KHÔNG — nếu EXIF ≠ 1 mà dùng lẫn, hệ toạ độ pixel
+/// lệch 90°/lật so với đường cũ ⇒ sai khung. Khi lệch → trả null, pipeline
+/// dùng đường decode Dart cũ (chậm hơn nhưng GIỮ nguyên hiện trạng).
+int? _jpegExifOrientation(Uint8List b) {
+  try {
+    if (b.length < 4 || b[0] != 0xFF || b[1] != 0xD8) return null;
+    var i = 2;
+    while (i + 4 <= b.length) {
+      final m = b[i + 1];
+      if (b[i] != 0xFF || m == 0xFF) return null; // không phải marker
+      if (m == 0x01 || (m >= 0xD0 && m <= 0xD7) || m == 0xD8) {
+        i += 2; // marker không mang độ dài (STANDALONE/RST)
+        continue;
+      }
+      if (m == 0xD9 || m == 0xDA) {
+        return null; // EOI/SOS — hết header, không có EXIF
+      }
+      final segLen = (b[i + 2] << 8) | b[i + 3];
+      if (segLen < 2) return null;
+      if (m == 0xE1 && i + 12 <= b.length) {
+        // chữ ký "Exif\0\0" bắt đầu sau độ dài phân đoạn
+        if (b[i + 4] == 0x45 &&
+            b[i + 5] == 0x78 &&
+            b[i + 6] == 0x69 &&
+            b[i + 7] == 0x66 &&
+            b[i + 8] == 0x00 &&
+            b[i + 9] == 0x00) {
+          final t = i + 10; // đầu TIFF header
+          final le = b[t] == 0x49 && b[t + 1] == 0x49; // "II"
+          final be = b[t] == 0x4D && b[t + 1] == 0x4D; // "MM"
+          if (!le && !be) return null;
+          int u16(int p) =>
+              le ? (b[p] | (b[p + 1] << 8)) : ((b[p] << 8) | b[p + 1]);
+          int u32(int p) => le
+              ? (b[p] |
+                  (b[p + 1] << 8) |
+                  (b[p + 2] << 16) |
+                  (b[p + 3] << 24))
+              : ((b[p] << 24) |
+                  (b[p + 1] << 16) |
+                  (b[p + 2] << 8) |
+                  b[p + 3]);
+          final ifd = t + u32(t + 4);
+          if (ifd + 2 > b.length) return null;
+          final count = u16(ifd);
+          for (var e = 0; e < count; e++) {
+            final ent = ifd + 2 + e * 12;
+            if (ent + 12 > b.length) return null;
+            if (u16(ent) == 0x0112) {
+              // SHORT, count=1 → giá trị nằm 2 byte đầu của phần value
+              return u16(ent + 8);
+            }
+          }
+          return null;
+        }
+      }
+      i += 2 + segLen;
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// R17/R18 — decode ảnh bằng decoder NATIVE (Skia/dart:ui) trên isolate
+/// chính, rồi HOÀN TÁC bake-EXIF của Skia khi ảnh có EXIF ≠ 1 (xem
+/// [_unbakeExifRgba]) — khi đó hệ toạ độ pixel GIỐNG HẲN đường decode
+/// package `image` (không bake), toàn bộ pipeline phía sau không đổi.
+/// Trả null → pipeline decode lối cũ (package `image` trong isolate chấm).
+Future<({Uint8List rgba, int width, int height})?> _skiaPredecode(
+  Uint8List bytes,
+) async {
+  final orientation = _jpegExifOrientation(bytes);
+  try {
+    final swNative = Stopwatch()..start();
+    final done = Completer<Image>();
+    decodeImageFromList(bytes, done.complete);
+    final image = await done.future;
+    final data = await image.toByteData(format: ImageByteFormat.rawRgba);
+    final w = image.width;
+    final h = image.height;
+    image.dispose();
+    swNative.stop();
+    if (data == null) return null;
+    final baked =
+        data.buffer.asUint8List(data.offsetInBytes, w * h * 4);
+    // EXIF ∈ 2..8 → Skia đã QUAY/lật ảnh so với layout thô: hoàn tác lại
+    // để khớp hệ toạ độ của đường decode Dart cũ.
+    final swUnbake = Stopwatch()..start();
+    final unbaked = _unbakeExifRgba(baked, w, h, orientation ?? 1);
+    swUnbake.stop();
+    debugPrint('DBG predecode: EXIF=$orientation '
+        'native=${swNative.elapsedMilliseconds}ms '
+        'unbake=${swUnbake.elapsedMilliseconds}ms '
+        '→ dùng Skia (${unbaked.width}x${unbaked.height})');
+    return unbaked;
+  } catch (e) {
+    debugPrint('DBG predecode: LỖI $e → decode lối cũ');
+    return null;
+  }
+}
+
+/// R18 — cửa test cho [_unbakeExifRgba] (công khai CHỈ để test hình học).
+@visibleForTesting
+({Uint8List rgba, int width, int height}) unbakeExifRgbaForTest(
+  Uint8List src,
+  int w,
+  int h,
+  int orientation,
+) =>
+    _unbakeExifRgba(src, w, h, orientation);
+
+/// R18 — hoàn tác bake EXIF của Skia trên RGBA (đưa về layout thô), trả về
+/// kèm KÍCH THƯỚC THÔ (vì quay 90° hoán đổi w↔h).
+///
+/// Ý nghĩa EXIF = phép biến đổi cần áp lên THÔ để hiển thị đúng (bake):
+///   1 none | 2 mirrorH | 3 rot180 | 4 mirrorV | 5 transpose | 6 rot90CW |
+///   7 mirrorH+rot90CW | 8 rot90CCW
+/// Hoàn tác = biến đổi NGƯỢC trên ảnh đã bake. Mỗi phép là involution
+/// (áp 2 lần = 1). Mỗi mapping đã chứng minh tay bằng ví dụ 3×2 (a..f).
+({Uint8List rgba, int width, int height}) _unbakeExifRgba(
+  Uint8List src,
+  int w,
+  int h,
+  int orientation,
+) {
+  switch (orientation) {
+    case 2:
+      return _mirrorH(src, w, h);
+    case 3:
+      return _rot180(src, w, h);
+    case 4:
+      return _mirrorV(src, w, h);
+    case 5:
+      // bake = transpose(raw) → raw = transpose(baked)
+      return _transpose(src, w, h);
+    case 6:
+      // bake = rot90CW(raw) → raw = rot90CCW(baked)
+      return _rot90Ccw(src, w, h);
+    case 7:
+      // bake = rot90CW(mirrorH(raw))
+      //   → mirrorH(raw) = rot90CCW(baked) → raw = mirrorH(rot90CCW(baked))
+      final mid = _rot90Ccw(src, w, h);
+      return _mirrorH(mid.rgba, mid.width, mid.height);
+    case 8:
+      // bake = rot90CCW(raw) → raw = rot90CW(baked)
+      return _rot90Cw(src, w, h);
+    default:
+      // EXIF 1/0/không rõ: Skia không bake → trả nguyên bản.
+      return (rgba: src, width: w, height: h);
+  }
+}
+
+/// Bản RGBA 4 byte/pixel — dùng nội bộ cho các phép hoàn tác EXIF.
+typedef _Rgba = ({Uint8List rgba, int width, int height});
+
+/// mirrorH 3×2 ví dụ: [a b c / d e f] → [c b a / f e d]
+_Rgba _mirrorH(Uint8List src, int w, int h) {
+  final dst = Uint8List(w * h * 4);
+  for (var y = 0; y < h; y++) {
+    final row = y * w * 4;
+    for (var x = 0; x < w; x++) {
+      final s = row + ((w - 1 - x) * 4);
+      final d = row + (x * 4);
+      dst[d] = src[s];
+      dst[d + 1] = src[s + 1];
+      dst[d + 2] = src[s + 2];
+      dst[d + 3] = src[s + 3];
+    }
+  }
+  return (rgba: dst, width: w, height: h);
+}
+
+/// mirrorV: [a b c / d e f] → [d e f / a b c]
+_Rgba _mirrorV(Uint8List src, int w, int h) {
+  final dst = Uint8List(w * h * 4);
+  for (var y = 0; y < h; y++) {
+    for (var x = 0; x < w; x++) {
+      final s = ((h - 1 - y) * w + x) * 4;
+      final d = (y * w + x) * 4;
+      dst[d] = src[s];
+      dst[d + 1] = src[s + 1];
+      dst[d + 2] = src[s + 2];
+      dst[d + 3] = src[s + 3];
+    }
+  }
+  return (rgba: dst, width: w, height: h);
+}
+
+/// rot180: [a b c / d e f] → [f e d / c b a]
+_Rgba _rot180(Uint8List src, int w, int h) {
+  final dst = Uint8List(w * h * 4);
+  for (var y = 0; y < h; y++) {
+    for (var x = 0; x < w; x++) {
+      final s = ((h - 1 - y) * w + (w - 1 - x)) * 4;
+      final d = (y * w + x) * 4;
+      dst[d] = src[s];
+      dst[d + 1] = src[s + 1];
+      dst[d + 2] = src[s + 2];
+      dst[d + 3] = src[s + 3];
+    }
+  }
+  return (rgba: dst, width: w, height: h);
+}
+
+/// transpose: [a b c / d e f] → [a d / b e / c f] (dst là w×h → h×w)
+_Rgba _transpose(Uint8List src, int w, int h) {
+  final dst = Uint8List(w * h * 4);
+  for (var y = 0; y < h; y++) {
+    for (var x = 0; x < w; x++) {
+      final s = (y * w + x) * 4;
+      final d = (x * h + y) * 4;
+      dst[d] = src[s];
+      dst[d + 1] = src[s + 1];
+      dst[d + 2] = src[s + 2];
+      dst[d + 3] = src[s + 3];
+    }
+  }
+  return (rgba: dst, width: h, height: w);
+}
+
+/// rot90CW: dst(w×h) ← src[h×w], dst(dx,dy) ← src(w-1-dy, dx)
+/// 3×2 ví dụ: [a b c / d e f] → [d a / e b / f c] (3 dòng, 2 cột)
+_Rgba _rot90Cw(Uint8List src, int w, int h) {
+  final dstW = h;
+  final dstH = w;
+  final dst = Uint8List(w * h * 4);
+  for (var dy = 0; dy < dstH; dy++) {
+    for (var dx = 0; dx < dstW; dx++) {
+      final s = ((h - 1 - dx) * w + dy) * 4;
+      final d = (dy * dstW + dx) * 4;
+      dst[d] = src[s];
+      dst[d + 1] = src[s + 1];
+      dst[d + 2] = src[s + 2];
+      dst[d + 3] = src[s + 3];
+    }
+  }
+  return (rgba: dst, width: dstW, height: dstH);
+}
+
+/// rot90CCW: dst(h×w) ← src[w×h], dst(dx,dy) ← src(dy, h-1-dx)
+/// 3×2 ví dụ: [a b c / d e f] → [c f / b e / a d] (3 dòng, 2 cột)
+_Rgba _rot90Ccw(Uint8List src, int w, int h) {
+  final dstW = h;
+  final dstH = w;
+  final dst = Uint8List(w * h * 4);
+  for (var dy = 0; dy < dstH; dy++) {
+    for (var dx = 0; dx < dstW; dx++) {
+      final s = (dy * w + (h - 1 - dx)) * 4;
+      final d = (dy * dstW + dx) * 4;
+      dst[d] = src[s];
+      dst[d + 1] = src[s + 1];
+      dst[d + 2] = src[s + 2];
+      dst[d + 3] = src[s + 3];
+    }
+  }
+  return (rgba: dst, width: dstW, height: dstH);
+}

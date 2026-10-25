@@ -48,6 +48,7 @@ final class ClassesTab extends ConsumerWidget {
               ),
       ),
       floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'addClassFab',
         icon: const Icon(Icons.add),
         label: const Text('Thêm lớp'),
         onPressed: () => _addClassDialog(context, ref),

@@ -200,7 +200,7 @@ class AppLocalizationsVi extends AppLocalizations {
   String get gradeResultKeep => 'GIỮ';
 
   @override
-  String get warnTitle => 'Warning !!!';
+  String get warnTitle => 'Cảnh báo';
 
   @override
   String get warnDuplicateLabel => 'Trùng SBD';

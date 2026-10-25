@@ -74,6 +74,36 @@ void main() {
     expect(detection.quad, isNull);
   });
 
+  // R6a — hồi quy hiện trường THẬT: chụp phiếu hiện TRÊN MÀN HÌNH máy tính
+  // (SĐebug ảnh chụp 1080×1920: mốc trên trang sáng gray ~100, viền/bezel
+  // màn tối + dải đen dưới cùng kéo mean toàn ảnh → ngưỡng toàn cục
+  // mean×0.55 ≈ 88 bỏ sót mốc và ghép bezel thành khối khổng lồ).
+  test('detectGray: phiếu trên nền màn hình tối (bezel) vẫn đủ 4 mốc', () {
+    const markers = [
+      Offset(54, 80),
+      Offset(486, 80),
+      Offset(486, 730),
+      Offset(54, 730),
+    ];
+    final gray = _screenPhotoGray(
+      width: 540,
+      height: 960,
+      markerSide: 16,
+      markers: markers,
+    );
+    final detection =
+        const SheetMarkerDetector().detectGray(gray, width: 540, height: 960);
+    expect(detection.quad, isNotNull,
+        reason: 'Ngưỡng thích nghi: mốc gray ~100 trên trang sáng phải tối hơn '
+            '0.8×luminance cục bộ; bezel đen PHẲNG không được ghép nuốt mốc');
+    final quad = detection.quad!;
+    expect(quad.tl.dx, closeTo(54, 6));
+    expect(quad.tl.dy, closeTo(80, 6));
+    expect(quad.tr.dx, closeTo(486, 6));
+    expect(quad.br.dy, closeTo(730, 6));
+    expect(quad.bl.dx, closeTo(54, 6));
+  });
+
   test('detectGray chia sẻ lõi với detect: quad trùng nhau trên fixture', () {
     final gray = _grayFromPng(fixtureBytes);
     final det = const SheetMarkerDetector().detect(fixtureBytes);
@@ -387,6 +417,54 @@ Uint8List _syntheticGray({
         }
       }
     }
+  }
+  return data;
+}
+
+/// R6a — ảnh tổng hợp kiểu CHỤP MÀN HÌNH (mô phỏng ảnh chụp 1080×1920 thực tế
+/// họ đã dùng): trang phiếu SÁNG chiếm phần lớn khung, viền/bezel màn + dải
+/// đen dưới cùng (bezel + taskbar) kéo mean toàn ảnh xuống — phủ định
+/// ngưỡng toàn cục mean×k; mốc chỉ "tối so với LÂN CẬN" (gray ~100 trên
+/// trang ~205, không phải đen tuyệt đối do chụp màn).
+Uint8List _screenPhotoGray({
+  required int width,
+  required int height,
+  required int markerSide,
+  required List<Offset> markers,
+}) {
+  final data = Uint8List(width * height);
+  // Trang chiếm phần giữa khung: viền 24 px hai bên, 50 px trên,
+  // 200 px dưới (bezel + taskbar như ảnh thật).
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final inPage = x >= 24 &&
+          x < width - 24 &&
+          y >= 50 &&
+          y < height - 200;
+      if (inPage) {
+        // Chụp màn có gradient sáng nhẹ theo chiều dọc.
+        final t = (y - 50) / (height - 250);
+        data[y * width + x] = (215 - 20 * t).round().clamp(0, 255);
+      } else {
+        data[y * width + x] = 25; // bezel/dải đen màn hình
+      }
+    }
+  }
+  void fillSquare(double cx, double cy, int side, int value) {
+    final half = side ~/ 2;
+    final x0 = (cx - half).floor().clamp(0, width - 1);
+    final x1 = (cx + half).ceil().clamp(0, width - 1);
+    final y0 = (cy - half).floor().clamp(0, height - 1);
+    final y1 = (cy + half).ceil().clamp(0, height - 1);
+    for (var yy = y0; yy <= y1; yy++) {
+      data.fillRange(yy * width + x0, yy * width + x1 + 1, value);
+    }
+  }
+
+  // Mốc CHỤP MÀN: chỉ gray 100 (không đen tuyệt đối) — ngưỡng toàn cục
+  // rớt, ngưỡng thích nghi theo lân cận phải bắt được.
+  for (final m in markers) {
+    fillSquare(m.dx, m.dy, markerSide, 100);
   }
   return data;
 }

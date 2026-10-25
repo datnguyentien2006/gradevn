@@ -69,6 +69,7 @@ final class ContestsTab extends ConsumerWidget {
               ),
       ),
       floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'newContestFab',
         icon: const Icon(Icons.add),
         label: const Text('Tạo kỳ thi'),
         onPressed: () => _createContest(context, ref),

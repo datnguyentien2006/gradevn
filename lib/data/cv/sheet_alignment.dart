@@ -293,24 +293,66 @@ final class SheetMarkerDetector {
       return const MarkerDetection(quad: null, candidates: []);
     }
     final mean = sum / count;
-    final dark = (mean * 0.55).clamp(40.0, 170.0);
     if (debug) {
-      print('detect: mean=$mean dark=$dark f=$f dst=$dw×$dh '
-          'expectedSide=${(tpl.markerSide / tpl.pageWidthUnits * dw).toStringAsFixed(1)}');
-    }
-
-    // Mask tối ở ảnh thu nhỏ (lấy mẫu pixel góc trái-của-bậc).
-    final mask = List<bool>.filled(dw * dh, false);
-    for (var dy = 0; dy < dh; dy++) {
-      for (var dx = 0; dx < dw; dx++) {
-        mask[dy * dw + dx] = grayAt(dx * f, dy * f) < dark;
-      }
+      print('detect: mean=$mean f=$f dst=$dw×$dh '
+          'expectedSide=${(tpl.markerSide / tpl.pageWidthUnits * dw).toStringAsFixed(1)} '
+          'threshold=adaptive(local_mean×0.8, cửa sổ≈2×mốc)');
     }
 
     // Cỡ ô mốc hợp lệ theo template (px ảnh thu nhỏ; tỉ lệ so với TRANG giấy).
     final expectedSide = tpl.markerSide / tpl.pageWidthUnits * dw;
     final minSide = math.max(5.0, expectedSide * 0.4);
     final maxSide = math.max(minSide * 2, expectedSide * 3.0);
+
+    // R6a — NGƯỠNG THÍCH NGHI CỤC BỘ (thay ngưỡng toàn cục mean×0.55).
+    // Hiện trường chụp MÀN HÌNH màn Outline + viền/bezel màn tối + bàn tối
+    // kéo mean toàn ảnh xuống (vd. mean=108 → dark=60): mốc in trên trang
+    // sáng (gray ~60–100) rớt ngưỡng toàn cục → mất mốc góc; đồng thời
+    // vùng bezel đen PHẲNG ghép thành khối khổng lồ (bw=1080) nuốt mốc mép.
+    // Nguyên tắc mới: pixel "tối" khi nó TỐI so với CỬA SỔ quanh nó
+    // (integral image, cạnh cửa sổ ≈ 2× cạnh mốc kỳ vọng):
+    //  - mốc đen đặc trên trang sáng → pixel ≈ 0 ≪ 0.8×localMean → tối ✓
+    //  - nền đen phẳng (bezel) → pixel ≈ localMean → KHÔNG tối → không còn
+    //    khối ghép khổng lồ ✓
+    final graySmall = Uint8List(dw * dh);
+    for (var dy = 0; dy < dh; dy++) {
+      for (var dx = 0; dx < dw; dx++) {
+        graySmall[dy * dw + dx] = grayAt(dx * f, dy * f) & 0xFF;
+      }
+    }
+
+    final iw = dw + 1;
+    final integral = List<int>.filled(iw * (dh + 1), 0);
+    for (var y = 0; y < dh; y++) {
+      var rowSum = 0;
+      final out = (y + 1) * iw;
+      final prev = y * iw;
+      for (var x = 0; x < dw; x++) {
+        rowSum += graySmall[y * dw + x];
+        integral[out + x + 1] = integral[prev + x + 1] + rowSum;
+      }
+    }
+
+    final winHalf = math.max(8, expectedSide.round());
+    final mask = List<bool>.filled(dw * dh, false);
+    for (var dy = 0; dy < dh; dy++) {
+      final y0 = math.max(0, dy - winHalf);
+      final y1 = math.min(dh - 1, dy + winHalf);
+      final prevRow = y0 * iw;
+      final outRow = (y1 + 1) * iw;
+      for (var dx = 0; dx < dw; dx++) {
+        final x0 = math.max(0, dx - winHalf);
+        final x1 = math.min(dw - 1, dx + winHalf);
+        final windowSum = integral[outRow + x1 + 1] -
+            integral[prevRow + x1 + 1] -
+            integral[outRow + x0] +
+            integral[prevRow + x0];
+        final localMean =
+            windowSum / ((x1 - x0 + 1) * (y1 - y0 + 1));
+        mask[dy * dw + dx] =
+            graySmall[dy * dw + dx] < localMean * 0.8;
+      }
+    }
 
     final candidateList = _findSquareCandidates(
       mask,
@@ -546,6 +588,73 @@ final class PerspectiveWarper {
       }
     }
     return img.encodePng(out, level: 3);
+  }
+
+  /// R15: nắn phẳng ẢNH XÁM PLANAR (byte/pixel, không stride) → mảng xám
+  /// PLANAR. Đường nóng của luồng chụp thật: bỏ hẳn decode/encode trong
+  /// pipeline (người dùng: "chấm 10-15s quá lâu") — ảnh nguồn đã decode
+  /// 1 lần trước đó, kết quả là mảng xám mỗi pixel 1 byte để kiểm chứng +
+  /// đo mật độ dùng chung, chỉ encode PNG 1 lần ở cuối (thay cho từng
+  /// lần thử warp). Toạ độ lấy mẫu = chính `_sampleGray` của
+  /// [warpRectify] (kênh đầu) → giá trị pixel đầu ra ĐỐI XỨNG hệ quả
+  /// warp cũ, không đổi kết quả chấm.
+  ({Uint8List gray, int width, int height}) warpGrayPlanar({
+    required Uint8List srcGray,
+    required int srcWidth,
+    required int srcHeight,
+    required AlignmentQuad quad,
+    required AlignmentQuad targetQuad,
+    required Size outputSize,
+  }) {
+    final ow = outputSize.width.toInt();
+    final oh = outputSize.height.toInt();
+    final out = Uint8List(ow * oh);
+    final homo = solveHomography(targetQuad.corners, quad.corners);
+    final h0 = homo[0], h1 = homo[1], h2 = homo[2];
+    final h3 = homo[3], h4 = homo[4], h5 = homo[5];
+    final h6 = homo[6], h7 = homo[7];
+
+    // R17 (log22): nội suy női však loạt — warp chiếm 2251ms/bước (**release**),
+    // chủ yếu do applyHomography tạo MỘT object Offset mỗi pixel (3.5 triệu
+    // object
+    // + clamp/floor qua extension) và bỏ round() khi gán. Lặp NỘI TÚI đây,
+    // giữ ĐÚNG THỨ TỰ FLOAT của applyHomography:
+    //   u = (h0×x + h1×y + h2) / (h6×x + h7×y + 1)   (x,y = trang chuẩn)
+    // cùng công thức bilinear của _sampleGray (kênh 1) → pixel đầu ra ĐỐI
+    // XỨNG bit-cho-bit với đường cũ, chấm không đổi.
+    final srcW = srcWidth;
+    final srcH = srcHeight;
+    final wLast = srcW - 1;
+    final hLast = srcH - 1;
+    for (var y = 0; y < oh; y++) {
+      final h1y = h1 * y;
+      final h4y = h4 * y;
+      final h7y = h7 * y;
+      final rowBase = y * ow;
+      for (var x = 0; x < ow; x++) {
+        final den = (h6 * x + h7y + 1.0);
+        var u = (h0 * x + h1y + h2) / den;
+        var v = (h3 * x + h4y + h5) / den;
+        u = u < 0 ? 0 : (u > wLast ? wLast.toDouble() : u);
+        v = v < 0 ? 0 : (v > hLast ? hLast.toDouble() : v);
+        final x0 = u.toInt();
+        final y0 = v.toInt();
+        final x1 = x0 >= wLast ? wLast : x0 + 1;
+        final y1 = y0 >= hLast ? hLast : y0 + 1;
+        final fracX = u - x0;
+        final fracY = v - y0;
+        final idx = y0 * srcW + x0;
+        final g00 = srcGray[idx];
+        final g10 = srcGray[idx + (x1 - x0)];
+        final g01 = srcGray[idx + (y1 - y0) * srcW];
+        final g11 = srcGray[idx + (y1 - y0) * srcW + (x1 - x0)];
+        final top = g00 + (g10 - g00) * fracX;
+        final bottom = g01 + (g11 - g01) * fracX;
+        out[rowBase + x] =
+            (top + (bottom - top) * fracY).round().clamp(0, 255);
+      }
+    }
+    return (gray: out, width: ow, height: oh);
   }
 
   /// R2: nắn phẳng trả về ẢNH XÁM (img.Image) KHÔNG encode — dùng khi chỉ

@@ -131,6 +131,65 @@ final class DartOmrImagePipeline implements OmrImagePipeline {
     );
   }
 
+  /// R15: đo mật độ trên mảng xám PLANAR (đường nóng luồng chụp thật) —
+  /// chạy chính `_cellInkDensity` của [measure] với channels=1. Giá trị
+  /// từng pixel tương đương ảnh PNG xám cũ (R=G=B) → kết quả mật độ
+  /// giữ nguyên, chỉ bỏ decode PNG + grayscale-copy.
+  SheetDensities measureGrayPlanar(
+    Uint8List gray, {
+    required int width,
+    required int height,
+    required SheetLayout layout,
+    OmrTuning tuning = const OmrTuning(),
+  }) {
+    final scaleX = width / layout.page.width;
+    final scaleY = height / layout.page.height;
+    Rect scaleRect(Rect r) => Rect.fromLTRB(
+          r.left * scaleX,
+          r.top * scaleY,
+          r.right * scaleX,
+          r.bottom * scaleY,
+        );
+
+    double measureRect(Rect rect) => _cellInkDensity(
+          bytes: gray,
+          channels: 1,
+          imageWidth: width,
+          imageHeight: height,
+          cell: scaleRect(rect),
+          tuning: tuning,
+        );
+
+    final blocks = <DensityBlock>[];
+    for (final block in layout.answerBlocks) {
+      final values = List.generate(
+        block.rows,
+        (row) => List.generate(
+          block.columns,
+          (col) => measureRect(block.cellRect(row, col)),
+        ),
+      );
+      blocks.add(DensityBlock(values));
+    }
+
+    DensityBlock digitGrid(DigitGridGeometry grid) {
+      final values = List.generate(
+        grid.slots,
+        (slot) => List.generate(
+          grid.rows,
+          (value) => measureRect(grid.cellRect(slot, value)),
+        ),
+      );
+      return DensityBlock(values);
+    }
+
+    return SheetDensities(
+      answerBlocks: List.unmodifiable(blocks),
+      studentCodeGrid: digitGrid(layout.studentCodeGrid),
+      examCodeGrid: digitGrid(layout.examCodeGrid),
+    );
+  }
+
   /// Tỉ lệ pixel "có mực" trong lõi ô, so với nền ước lượng từ viền ô.
   double _cellInkDensity({
     required Uint8List bytes,

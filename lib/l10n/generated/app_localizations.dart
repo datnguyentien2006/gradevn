@@ -439,7 +439,7 @@ abstract class AppLocalizations {
   /// No description provided for @warnTitle.
   ///
   /// In vi, this message translates to:
-  /// **'Warning !!!'**
+  /// **'Cảnh báo'**
   String get warnTitle;
 
   /// No description provided for @warnDuplicateLabel.

@@ -1,13 +1,19 @@
-// Màn KẾT QUẢ tức thời sau chụp (R4) — mô phỏng 1-1 khung kết quả TNMaker:
-// - Header: 2 nút tròn (quay lại / chú thích màu) + "Mã đề {code}" +
-//   dòng "{đúng} / {tổng} = {điểm,2 chữ số kiểu vi}".
+// Màn KẾT QUẢ tức thời sau chụp (R4 + tinh chỉnh R13):
+// - Header: nút tròn aqua (quay lại) thẳng hàng với "Mã đề {code}" +
+//   dòng "{đúng} / {tổng} = {điểm,2 chữ số kiểu vi}". Nút info đã bỏ.
 // - Thân: ảnh phiếu ĐÃ NẮN (grayscale) phủ VÀNH TRÒN màu theo kết quả:
 //   xanh lá = đúng, ĐỎ = sai, VÀNG = bỏ trống (yêu cầu người dùng);
 //   lưới số/SBD: ô đọc được vành xanh, không đọc được vành cam.
-// - Card "Warning!!!" giữa màn: Trùng SBD / Mã đề / Nhiều đáp án /
-//   Không trả lời / Sai quy chế.
+//   Khung ngoài có viền aqua nhạt #80DEEA bo góc 16.
+// - Card "Cảnh báo" giữa màn (nền trắng nhạt, dòng vàng nhạt):
+//   Trùng SBD / Mã đề / Nhiều đáp án / Không trả lời / Sai quy chế.
 // - 2 nút dưới: "CHỤP LẠI" (pop về camera) và "GIỮ" (lưu DB → về chi tiết
-//   kỳ thi). Quay lại/lưu điều hướng trả về camera/chi tiết.
+//   kỳ thi) — viền xanh #00FF66. Quay lại/lưu điều hướng trả về
+//   camera/chi tiết.
+// R13 (yêu cầu người dùng): nút ← aqua nhỏ 40, bỏ nút i + legend; viền
+// khung ảnh #80DEEA; card Cảnh báo nền sáng #F5FAFA, tiêu đề đỏ, dòng
+// thanh vàng nhạt #FFF3C4 chữ #8A6100; CHỤP LẠI/GIỮ viền #00FF66.
+// Camera R11 giữ nguyên.
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -20,19 +26,23 @@ import '../../domain/entities/graded_sheet.dart';
 import '../../domain/services/omr_decoder.dart';
 import '../../domain/services/sheet_layout.dart';
 
-const _accentOrange = Color(0xFFFF8F00);
-const _headerBtnColor = Color(0xFF93441C);
+const _kAqua = Color(0xFF00BCD4); // nút ← nền tròn header
+const _kAquaBorder = Color(0xFF80DEEA); // viền khung ảnh phiếu
+const _kWarnBg = Color(0xEBF5FAFA); // nền card Cảnh báo (trắng nhạt ~92%)
+const _kWarnTitle = Color(0xFFE53935); // tiêu đề "Cảnh báo"
+const _kWarnItemBg = Color(0xFFFFF3C4); // thanh nền vàng nhạt từng dòng
+const _kWarnItemText = Color(0xFF8A6100); // chữ vàng đậm/nâu vàng trong thanh
+const _kActionGreen = Color(0xFF00FF66); // CHỤP LẠI / GIỮ
 const _green = Color(0xFF1E8E3E);
 const _red = Color(0xFFDB4437);
 const _yellow = Color(0xFFF9AB00);
 
-/// Hàng cảnh báo trong card "Warning!!!".
+/// Hàng cảnh báo trong card "Cảnh báo".
 final class _WarnRow {
-  const _WarnRow(this.label, this.value, this.valueColor);
+  const _WarnRow(this.label, this.value);
 
   final String label;
   final String value;
-  final Color valueColor;
 }
 
 final class GradeResultScreen extends StatefulWidget {
@@ -99,43 +109,33 @@ final class _GradeResultScreenState extends State<GradeResultScreen> {
         _isDuplicateStudent(graded, widget.previousSheets)
             ? l10n.warnDuplicateYes
             : l10n.warnDuplicateNone,
-        _isDuplicateStudent(graded, widget.previousSheets) ? _red : Colors.white,
       ),
       _WarnRow(
         l10n.resultExamCodeLabel,
         graded.usedKey?.examCode ?? graded.usedExamCode,
-        graded.usedKey != null
-            ? _green
-            : (graded.usedBestGuessKey ? _yellow : _red),
       ),
     ];
     if (graded.usedBestGuessKey) {
       rows.add(_WarnRow(
-          l10n.resultExamCodeLabel, l10n.resultBestGuessNote, _yellow));
+          l10n.resultExamCodeLabel, l10n.resultBestGuessNote));
     }
     if (graded.multiAnswerCount > 0) {
       rows.add(_WarnRow(
         l10n.warnMultiLabel,
         l10n.warnMultiValue(graded.multiAnswerCount),
-        _yellow,
       ));
     }
     if (graded.result.unansweredCount > 0) {
       rows.add(_WarnRow(
         l10n.warnBlankLabel,
         l10n.warnBlankValue(graded.result.unansweredCount),
-        _yellow,
       ));
     }
     final unreadable =
         scan.studentCodeRaw.contains('?') || scan.examCodeRaw.contains('?');
     if (unreadable ||
         (!graded.graded && graded.ungradedReason != null)) {
-      rows.add(_WarnRow(
-        l10n.warnIrregularLabel,
-        l10n.warnIrregularValue,
-        _red,
-      ));
+      rows.add(_WarnRow(l10n.warnIrregularLabel, l10n.warnIrregularValue));
     }
     return rows;
   }
@@ -149,30 +149,15 @@ final class _GradeResultScreenState extends State<GradeResultScreen> {
     return '$correct / $total = $score';
   }
 
-  void _showLegend() {
-    final l10n = AppLocalizations.of(context)!;
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.gradeLegendTitle),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _LegendDot(color: _green, label: l10n.gradeLegendCorrect),
-            _LegendDot(color: _red, label: l10n.gradeLegendWrong),
-            _LegendDot(color: _yellow, label: l10n.gradeLegendBlank),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: Text(l10n.ok),
-          ),
-        ],
-      ),
-    );
-  }
+  /// Style chung cho CHỤP LẠI / GIỮ: viền xanh #00FF66, chữ xanh,
+  /// bo góc 13, nền trong suốt.
+  ButtonStyle _actionButtonStyle() => OutlinedButton.styleFrom(
+        foregroundColor: _kActionGreen,
+        side: const BorderSide(color: _kActionGreen, width: 1.5),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -187,7 +172,8 @@ final class _GradeResultScreenState extends State<GradeResultScreen> {
       body: Column(
         children: [
           // ----------------------------------------------------------------
-          // HEADER: nút quay lại + info / "Mã đề {code}" + dòng điểm.
+          // HEADER: nút quay lại (aqua, nhỏ) thẳng hàng với
+          // "Mã đề {code}" + dòng điểm. Nút info đã bỏ (R13).
           // ----------------------------------------------------------------
           Padding(
             padding: EdgeInsets.fromLTRB(12, safeTop + 8, 12, 8),
@@ -199,13 +185,7 @@ final class _GradeResultScreenState extends State<GradeResultScreen> {
                   tooltip: MaterialLocalizations.of(context).backButtonTooltip,
                   onTap: () => Navigator.of(context).maybePop(),
                 ),
-                const SizedBox(width: 10),
-                _RoundHeaderButton(
-                  icon: Icons.info_outlined,
-                  tooltip: l10n.gradeLegendTitle,
-                  onTap: _showLegend,
-                ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -273,45 +253,38 @@ final class _GradeResultScreenState extends State<GradeResultScreen> {
             ),
           ),
           // ----------------------------------------------------------------
-          // FOOTER: CHỤP LẠI | GIỮ (giống SỬA / GIỮ trong ảnh tham chiếu).
+          // FOOTER: CHỤP LẠI | GIỮ — 2 nút viền xanh #00FF66, bằng nhau
+          // chia đều trong thanh đáy.
           // ----------------------------------------------------------------
           SafeArea(
             top: false,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(18, 6, 18, 6),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  TextButton(
-                    onPressed: _saving
-                        ? null
-                        : () => Navigator.of(context).pop(), // về camera
-                    style: TextButton.styleFrom(
-                      foregroundColor: _accentOrange,
-                      textStyle: const TextStyle(
-                        fontSize: 21,
-                        fontWeight: FontWeight.w800,
-                      ),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _saving
+                          ? null
+                          : () => Navigator.of(context).pop(), // về camera
+                      style: _actionButtonStyle(),
+                      child: Text(l10n.gradeResultRetake),
                     ),
-                    child: Text(l10n.gradeResultRetake),
                   ),
-                  TextButton(
-                    onPressed: _saving ? null : _keep,
-                    style: TextButton.styleFrom(
-                      foregroundColor: _accentOrange,
-                      textStyle: const TextStyle(
-                        fontSize: 21,
-                        fontWeight: FontWeight.w800,
-                      ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _saving ? null : _keep,
+                      style: _actionButtonStyle(),
+                      child: _saving
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: _kActionGreen),
+                            )
+                          : Text(l10n.gradeResultKeep),
                     ),
-                    child: _saving
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: _accentOrange),
-                          )
-                        : Text(l10n.gradeResultKeep),
                   ),
                 ],
               ),
@@ -323,8 +296,9 @@ final class _GradeResultScreenState extends State<GradeResultScreen> {
   }
 }
 
-/// Card "Warning!!!" giữa màn (giống ảnh tham chiếu TNMaker): nền tối mờ
-/// bo tròn, tiêu đề trắng to, hàng (label trắng — giá trị màu trạng thái).
+/// Card "Cảnh báo" giữa màn: nền trắng nhạt hơi trong (~92%) bo tròn,
+/// tiêu đề đỏ đậm căn giữa, từng dòng là thanh nền vàng nhạt với chữ
+/// nâu vàng (#8A6100) đọc rõ trên nền sáng.
 final class _WarningCard extends StatelessWidget {
   const _WarningCard({required this.rows});
 
@@ -332,11 +306,12 @@ final class _WarningCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
       decoration: BoxDecoration(
-        color: const Color(0x9E161616),
+        color: _kWarnBg,
         borderRadius: BorderRadius.circular(22),
       ),
       child: Column(
@@ -344,44 +319,51 @@ final class _WarningCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            'Warning !!!',
+            l10n.warnTitle,
             style: const TextStyle(
-              color: Colors.white,
+              color: _kWarnTitle,
               fontSize: 24,
               fontWeight: FontWeight.w800,
             ),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           for (final row in rows)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Text(
-                      row.label,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _kWarnItemBg,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        row.label,
+                        style: const TextStyle(
+                          color: _kWarnItemText,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                  ),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 190),
-                    child: Text(
-                      row.value,
-                      style: TextStyle(
-                        color: row.valueColor,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 190),
+                      child: Text(
+                        row.value,
+                        style: const TextStyle(
+                          color: _kWarnItemText,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        textAlign: TextAlign.right,
                       ),
-                      textAlign: TextAlign.right,
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
         ],
@@ -390,7 +372,8 @@ final class _WarningCard extends StatelessWidget {
   }
 }
 
-/// Nút tròn header (quay lại / info) — nền nâu đậm như ảnh tham chiếu.
+/// Nút tròn header — nền aqua #00BCD4, đường kính 40 (R13: thu nhỏ,
+/// chỉ còn nút quay lại).
 final class _RoundHeaderButton extends StatelessWidget {
   const _RoundHeaderButton({
     required this.icon,
@@ -407,45 +390,17 @@ final class _RoundHeaderButton extends StatelessWidget {
     return Tooltip(
       message: tooltip,
       child: Material(
-        color: _headerBtnColor,
+        color: _kAqua,
         shape: const CircleBorder(),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onTap,
           child: SizedBox(
-            width: 56,
-            height: 56,
-            child: Icon(icon, color: Colors.white, size: 26),
+            width: 40,
+            height: 40,
+            child: Icon(icon, color: Colors.white, size: 21),
           ),
         ),
-      ),
-    );
-  }
-}
-
-final class _LegendDot extends StatelessWidget {
-  const _LegendDot({required this.color, required this.label});
-
-  final Color color;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          Container(
-            width: 22,
-            height: 22,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: color, width: 3),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(child: Text(label)),
-        ],
       ),
     );
   }
@@ -474,9 +429,14 @@ final class _GradedSheetView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: const Color(0xFF37363B),
+      // R13: khung VIỀN ngoài quanh vùng ảnh phiếu — aqua nhạt #80DEEA,
+      // 1.5px, bo góc 16 (chỉ khung ngoài, không đụng card Cảnh báo bên trong).
+      decoration: BoxDecoration(
+        border: Border.all(color: _kAquaBorder, width: 1.5),
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(14.5), // 16 trừ bề dày viền
         child: LayoutBuilder(builder: (context, constraints) {
           // Vùng image thực tế: aspect-fit contain của trang chuẩn.
           final fs = applyBoxFit(

@@ -1,10 +1,11 @@
-// Màn chấm phiếu bằng camera (R1→R4): preview TRÀN TOÀN MÀN HÌNH (không
+// Màn chấm phiếu bằng camera (R1→R5): preview TRÀN TOÀN MÀN HÌNH (không
 // AppBar) đúng như ảnh tham chiếu obs_006.png của TN Maker; 4 ô vuông
-// TRẮNG ĐẶC là PHÉP CHIẾU của 4 ô vuông đen góc phiếu; giáo viên kéo ô
-// TRẮNG đè BAO TRỌN ô đen in trên phiếu (drag/snap R2), detector bám
-// chắc thì ô KHOÁ viền xanh. Nút chụp LUÔN bật — chấm thẳng trong isolate
-// (processPhoto có lượt 2 nới lỏng): kết quả ngay (GradeResultScreen R4);
-// đọc không được → snackbar chụp lại (KHÔNG còn màn ghim mốc R4).
+// TRẮNG ĐẶC là CỬA SỔ NHẬN DIỆN mốc: **toàn bộ diện tích từng ô phải đè
+// BAO TRỌN ô đen in trên phiếu** — khi chụp, pipeline quét mọi pixel trong
+// ô (quy đúng hệ khung qua cover mapping) để tìm tâm mốc thật (R5), KHÔNG
+// dùng tâm ô kéo tay nữa. Đủ mốc → KHOÁ viền xanh. Nút chụp LUÔN bật —
+// chấm thẳng trong isolate (processPhoto có lượt 2 nới lỏng): kết quả ngay
+// (GradeResultScreen R4); đọc không được → snackbar chụp lại.
 //
 // Quy ước an toàn:
 // - Camera chỉ khởi tạo trên Android/iOS (Platform check) và MỌI lệnh camera
@@ -29,8 +30,10 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../../data/cv/detection_proof.dart' show saveDetectionProof;
+import '../../data/cv/marker_blob_scan.dart'
+    show expandFractionRect, locateDarkBlobInRegion;
 import '../../data/cv/preview_overlay.dart'
-    show CoverMapping, MarkerOverlayCalibration, snapSquareCenters, squareLockStates;
+    show CoverMapping, MarkerOverlayCalibration;
 import '../../data/cv/scan_flow.dart'
     show GradedScan, processPhoto;
 import '../../data/cv/sheet_alignment.dart';
@@ -67,23 +70,20 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   CameraController? _controller;
   bool _cameraFailed = false;
 
-  /// R2: kết quả phân tích khung preview mới nhất — ứng viên mốc theo TỈ LỆ
-  /// khung HIỂN THỊ + kích thước khung; null = chưa lần phân tích nào khớp
-  /// (không snap, chụp dùng detector như cũ).
-  _LiveFrame? _liveMarkers;
+  /// R8 (2026-10-25 log9) — CỐ ĐỊNH 4 ô: giáo viên DI CHUYỂN CAMERA cho
+  /// khớp 4 ô vuông đen (y chỗ TN Maker), KHÔNG kéo ô nữa. Tâm ô luôn lấy
+  /// từ calibration ([MarkerOverlayCalibration.centerFractions]) — bản
+  /// tính-tươi, không state. Yêu cầu nguyên trực tiếp từ người dùng.
+  List<Offset> get _squareCenters =>
+      MarkerOverlayCalibration.forArea(_previewArea).centerFractions;
 
-  /// R2: tâm 4 ô vuông (TỈ LỆ của vùng preview). Thứ tự 1..4 =
-  /// trái-trên → phải-trên → phải-dưới → trái-dưới (hệ QUAD). Chạy THẲNG
-  /// (chấm ngay, không ghim tay).
-  /// R3: vị trí mặc định bám PHÉP CHIẾU mốc góc; kéo tay (R2) vẫn giữ làm
-  /// dự phòng mốc phai — ô sim khớp mốc giúp overlay quad chính xác hơn.
-  List<Offset>? _squareCenters;
-
-  /// R2: ô còn được snap tự động? Kéo tay xong sẽ tắt snap cho ô đó.
-  final List<bool> _autoSnap = <bool>[true, true, true, true];
-
-  /// R2: ô đang bị kéo (không snap trong khi cầm tay).
-  int? _draggingIndex;
+  /// R8: đèn xanh TỪNG Ô từ phép quét LIVE dùng CHUNG thuật toán với đường
+  /// chụp ([locateDarkBlobInRegion] trên khung preview): ô xanh = "chính
+  /// phép quét khi chụp sẽ đọc được mốc trong ô này". Xanh cũ (detector
+  /// thấy candidate gần ô) là SAI — trên phiếu qua màn hình candidate gồm
+  /// cả glyph/chữ → xanh có thể trên chữ (người dùng đã hỏi ý nghĩa).
+  /// null = chưa lần phân tích nào.
+  List<bool>? _rectScanOk;
 
   /// R2: kích thước vùng preview (đo lần build gần nhất) — cần cho quy đổi
   /// khung ↔ màn hình và tính khoảng cách snap.
@@ -97,9 +97,8 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
 
   /// R3.4: vị trí + cỡ ô overlay = CALIBRATION THỰC ĐỊA do người dùng đo
   /// từ ảnh tham chiếu TNMaker — màn chụp DỌC nên `forArea` chọn bản DỌC
-  /// (720×1560): ô **181×227** (bảng đo 157×203 + inset **24 px**, R3.4
-  /// lượt 2 "tăng thêm nữa"; tâm KHÔNG đổi — ô phình quanh tâm cũ, phần
-  /// dư tràn nhẹ ra mép như kiểu TNMaker ô sát mép), 2 cột tâm x =
+  /// (720×1560): ô **157×203** chuẩn TN (R6 bỏ inset +24 px: ô phình
+  /// 181×227 chèn luôn chữ sát mốc — dò nhầm), 2 cột tâm x =
   /// 94.5 / 625.5 (R3.5 thu vào ±16 px), hàng trên tâm y = 165.5,
   /// hàng dưới tâm y = 1076.5.
   /// Preview tràn màn bóp nhẹ (như ảnh tham chiếu, preset 16:9 để bóp ít
@@ -119,26 +118,40 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     );
   }
 
-  /// R3: cỡ ô "tương đương" = cạnh dài khung ô calibrated (dùng cho bán kính
-  /// khoá và cỡ chữ): ô 163×209 không đều hai cạnh nên lấy cạnh lớn.
-  double get _markerVisualSide => math.max(
-        _markerBoxSize.width,
-        _markerBoxSize.height,
-      );
-
-  /// R3: bán kính "khoá" — tâm ô cách một ứng viên mốc ≤ 0.75 × cạnh dài khung
-  /// (nửa đường chéo khung ≈ 0.62 × cạnh dài; 0.75 đủ lỏng cho ngón tay/contact
-  /// giữa ô overlay và mốc detect được trong khung).
-  double get _lockRadius => _markerVisualSide * 0.75;
+  /// R8: bán kính "khoá" cũ (detector candidate trong 0.75×cạnh ô) BỎ —
+  /// đèn xanh giờ tính bằng phép quét blob thật [_rectScanOk].
 
   /// Đang phân tích 1 khung preview (trong isolate) — chặn chồng khung.
   bool _analyzing = false;
+
+  /// R10: TỰ ĐỘNG CHÁM — đủ 4 đèn xanh ổn định → tự chụp + chấm, người dùng
+  /// không cần bấm. 
+  /// - [_greenStreak]: số tick liên tiếp có đủ 4/4 (tick = 250ms) — đòi ổn
+  ///   định để không nổ vì đèn chớp qua ranhnh giới.
+  /// - [_autoArmed]: chống chụp LẶP. Nổ 1 lần rồi hạ; chỉ nạp lại khi đèn
+  ///   rời khỏi "4/4" (kéo phiếu ra/vào) — nếu không phiếu đứng yên sau khung
+  ///   kết quả khi "CHỤP LẠI" sẽ lặp chụp vô hạn.
+  bool _autoArmed = true;
+  int _greenStreak = 0;
+
+  /// TEMPDBG: đếm khung stream đi vào callback.
+  int _frameCount = 0;
+
+  /// R6b — cỡ khung HIỂN THỊ của stream phân tích (dọc: khung sensor
+  /// ngang xoay 90°). Được ghi lại từ khung phân tích ĐẦU TIÊN — phát hiện
+  /// mốc chưa đạt cũng không chặn việc quy ô ghim về hệ khung lúc chụp
+  /// (R6: chụp bắt buộc có markers live là SAI — chỉ cần kích thước khung).
+  Size? _analysisFrameSize;
 
   /// R2: thời điểm bắt đầu lần phân tích trước (throttle ≤ ~4 lần/giây).
   DateTime? _lastAnalysisStart;
 
   /// R2: khoảng nghỉ tối thiểu giữa hai lần phân tích khung preview.
-  static const Duration _analysisInterval = Duration(milliseconds: 250);
+  /// R11: chia tần số phân tích 4 Hz → 12.5 Hz (80 ms) — đèn xanh phải cập
+  /// NHANH theo yêu cầu người dùng ("chuyển xanh dường như ngay lập tức");
+  /// tick tính quét 4 ô chỉ ~1-2 ms (bỏ detector toàn trang chiếm phần lớn
+  /// thời gian — xem comment hàm top-level).
+  static const Duration _analysisInterval = Duration(milliseconds: 80);
 
   @override
   void initState() {
@@ -237,19 +250,37 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     if (controller == null) return;
     try {
       controller.startImageStream(_onCameraImage);
-    } catch (_) {
+      // TEMPDBG
+      debugPrint('DBG startImageStream: OK');
+    } catch (e) {
+      // TEMPDBG
+      debugPrint('DBG startImageStream: LỖI $e — bỏ luồng phân tích');
       // Luồng preview không hỗ trợ: bỏ overlay, luồng chấm vẫn bình thường.
     }
   }
 
   void _onCameraImage(CameraImage image) {
+    // TEMPDBG: đếm khung đi vào callback.
+    _frameCount++;
+    if (_frameCount % 30 == 1) {
+      debugPrint('DBG frame-in: n=$_frameCount planes=${image.planes.length} '
+          '${image.width}x${image.height} stride=${image.planes.first.bytesPerRow} '
+          'len=${image.planes.first.bytes.length} busy=$_busy analyzing=$_analyzing');
+    }
     if (_analyzing || _busy || !mounted) return;
     if (image.planes.isEmpty) return;
     final y = image.planes.first;
     final width = image.width;
     final height = image.height;
     final stride = y.bytesPerRow;
-    if (stride * (height - 1) + width > y.bytes.length) return; // khung cụt
+    if (stride * (height - 1) + width > y.bytes.length) {
+      // TEMPDBG
+      debugPrint('DBG frame-reject-cụt: stride*hm1+w=${stride * (height - 1) + width} > len=${y.bytes.length}');
+      return;
+    }
+    // R6b: ghi cỡ khung HIỂN THỊ (màn luôn dọc trên màn chụp → khung sensor
+    // ngang xoay 90°) — đủ để quy ô ghim lúc chụp, kể cả khi chưa thấy quad.
+    _analysisFrameSize = Size(height.toDouble(), width.toDouble());
 
     // R2: giới hạn tần suất phân tích (≤ ~4 lần/giây) — phát hiện mốc không
     // cần 30 fps; phần khung thừa chỉ tốn pin/CPU và gây giật preview.
@@ -266,73 +297,83 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     // quét pixel nữa, chỉ gửi nguyên khung bytes (~<1 MB) đi.
     final bytes = Uint8List.sublistView(y.bytes);
     // R3.4: màn chụp KHÓA DỌC (initState) → khung xoay 90° khớp màn dọc.
-    Isolate.run(() => _analyzeMarkerFrame(bytes, stride, width, height))
-        .then((frame) {
+    // R6: lệnh Isolate.run phải nằm trong hàm TOP-LEVEL — closure tạo trong
+    // méthode instance sẽ chụp context chứa `this` (State → CameraController
+    // → _Future unsendable) và SendPort.send ném "object is unsendable"
+    // CHO MỖI KHUNG, nuốt cả luồng phân tích. Hàm top-level chỉ chụp các
+    // biến sendable (bytes/stride/width/height + rects).
+    // R8: gửi kèm 4 ô GHIM theo TỈ LỆ khung ("_captureOverlayRects" — đúng
+    // vùng nhận diện mà CHỰP sẽ dùng) để isolate quét live: xanh = đọc được.
+    final rects = _captureOverlayRects()?.$1;
+    // R9: chọn CHIỀU xoay theo sensorOrientation của camera (90 = CW —
+    // hầu hết máy; 270 = CCW). Sai chiều → nội dung khung dọc lộn
+    // 180°/đối xứng → đèn xanh sẽ sáng ở ô đối diện.
+    final sensor = _controller?.value.description.sensorOrientation ?? 90;
+    final rotateCw = sensor != 270;
+    _analyzeMarkerFrameInIsolate(bytes, stride, width, height, rects,
+            rotateCw: rotateCw)
+        .then<void>((res) {
       if (_analyzing) {
         _analyzing = false;
       } else {
         return; // đã dispose/đổi trạng thái trong lúc isolate chạy.
       }
       if (!mounted || _busy) return;
-      if (frame == null) {
-        // Không xác định được phương hướng hiển thị: bỏ snap, giữ vị trí ô.
-        _liveMarkers = null;
-        return;
+      final rectOk = res;
+      // TEMPDBG: chỉ in KHI trạng thái đèn đổi — tránh nổ log 12 lần/giây.
+      final old = _rectScanOk;
+      if (!_sameLights(old, rectOk)) {
+        debugPrint('DBG rect-ok: '
+            '${[for (final o in rectOk) o ? "1" : "0"].join("")} '
+            '(trước: ${old == null ? "chưa" : [for (final o in old) o ? "1" : "0"].join("")})');
       }
       setState(() {
-        _liveMarkers = frame;
-        _snapSquares();
+        _rectScanOk = rectOk;
       });
-    }).catchError((Object _) {
+      // R11: tự động chụp khi đủ 4/4 đèn xanh — NGAY SAU 2 tick liên tiếp
+      // (~160 ms, cắm chữ "độ trễ thấp" của người dùng); KHÔNG hiện thông
+      /// báo "đã đủ 4 mốc" nữa — xanh đủ là chụp luôn. Nổ 1 lần/lượt
+      // "rời 4/4 → đủ 4/4" kể từ lúc nạp [_autoArmed]; _busy thì đợi tick sau.
+      final allGreen = rectOk.length >= 4 && rectOk.every((o) => o);
+      if (!allGreen) {
+        _greenStreak = 0;
+        _autoArmed = true;
+      } else if (_greenStreak < 2) {
+        _greenStreak++;
+      }
+      if (allGreen && _autoArmed && _greenStreak >= 2 && !_busy) {
+        _autoArmed = false; // hạ NGAY trước khi chụp — chống nổ lặp.
+        debugPrint('DBG auto-capture: đủ 4/4 đèn xanh x2 tick → TỰ CHỤP');
+        _capture();
+      }
+    }).catchError((Object e, StackTrace s) {
+      // TEMPDBG
+      debugPrint('DBG analyze-ERROR: $e');
+      debugPrint('$s');
       _analyzing = false;
       // Khung lỗi (memory/rotation lạ): bỏ qua, khung sau tiếp tục phân tích.
     });
   }
 
-  /// R2: snap các ô CÒN BẬT snap tự động vào ứng viên gần nhất (đơn vị px
-  /// màn hình) — bỏ qua ô đang kéo và ô đã bị phủ toạ độ tay. R3: mặc định
-  /// mọi ô bật snap (bám phép chiếu); kéo tay tắt snap đúng ô đó.
-  void _snapSquares() {
-    final centers = _squareCenters;
-    final area = _previewArea;
-    final lm = _liveMarkers;
-    if (centers == null || area == Size.zero || lm == null) return;
-    final frame = lm.frameSize;
-    final mapping = CoverMapping(frame: frame, screen: area);
-    final candidates = <Offset>[
-      for (final c in lm.candidates)
-        mapping.toScreen(Offset(c.dx * frame.width, c.dy * frame.height)),
-    ];
-    final snap = snapSquareCenters(
-      [for (final c in centers) Offset(c.dx * area.width, c.dy * area.height)],
-      candidates,
-      area.shortestSide * 0.25,
-    );
-    var changed = false;
-    final next = List<Offset>.from(centers);
-    for (var i = 0; i < next.length && i < snap.length; i++) {
-      if (!_autoSnap[i] || _draggingIndex == i) continue;
-      final target = snap[i];
-      if (target == null) continue;
-      next[i] = Offset(target.dx / area.width, target.dy / area.height);
-      changed = true;
-    }
-    if (changed) _squareCenters = next;
-  }
-
   /// Hàm top-level cho isolate (R2): lấy mẫu kênh Y về bề rộng
   /// [_previewTargetWidth], rồi chạy detector trên CẢ HAI phương hướng
   /// (thẳng / xoay 90°) vì buffer sensor có thể không khớp hướng màn.
-  /// R3.1: chọn phương hướng theo HƯỚNG MÀN — màn [landscapeDisplay]:
-  /// khung thẳng khớp màn ngang (sensor ∥ màn); màn dọc: khung xoay 90°
-  /// (sensor ngang + màn dọc là phổ biến). Chọn phương hướng mà QUAD nội
-  /// dung DỰNG ĐỨNG theo hướng màn để overlay khớp màn hình.
+  /// R3.1: chọn hướng theo HƯỚNG MÀN — khung nội dung DỰNG ĐỨNG theo màn.
   ///
-  /// Trả về `_LiveFrame` với ứng viên mốc theo TỈ LỆ khung đã chọn;
-  /// không phương hướng nào đạt → null (UI không snap, chụp dùng detector).
-  static _LiveFrame? _analyzeMarkerFrame(
+  /// R8 (2026-10-25): quét thêm 4 ô GHIM ([rects] — TỈ LỆ khung HIỂN THỊ,
+  /// đúng vùng mà CHỤP sẽ quét) bằng CHÍNH thuật toán đường chụp
+  /// ([locateDarkBlobInRegion]): ô "đọc được" khi blob đặc tìm thấy trong
+  /// ô và tâm blob nằm lại TRONG ô. Kết quả trả về cột [rectOk] — đèn
+  /// xanh từng ô (quem nghĩa mới: xanh = chuẩn bị chụp sẽ đạt ô đó).
+  ///
+  /// Trả về bản ghi (_LiveFrame?, rectOk). [_LiveFrame] null khi không
+  /// phương hướng nào dựng nổi quad — rectOk vẫn tính (đèn xanh không phụ
+  /// thuộc detector toàn trang).
+  static List<bool> _analyzeMarkerFrame(
       Uint8List planeBytes, int stride, int width, int height,
-      {bool landscapeDisplay = false}) {
+      {bool landscapeDisplay = false,
+      List<Rect>? rects,
+      bool rotateCw = true}) {
     final f = (width ~/ _previewTargetWidth).clamp(1, width);
     final dw = width ~/ f;
     final dh = height ~/ f;
@@ -344,63 +385,91 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
       }
     }
 
-    const detector = SheetMarkerDetector();
-    // Chiều thẳng: khung dw×dh.
-    final straight = detector.detectGray(gray, width: dw, height: dh);
-    // Xoay 90°: (x, y) → (y, w - 1 - x), khung dh×dw.
+    // R8: KHUNG HIỂN THỊ của hướng màn: portrait → xoay 90° (khung dh rộng
+    // × dw cao); landscape → thẳng (dw×dh). Phép quét ô chạy trên khung
+    // NÀY để khớp hoàn toàn phép quy ô màn↔khung lúc chụp.
+    final displayStraight = landscapeDisplay;
+    // R9-fix (log12, người dùng: "xanh khi chưa căn / ô trên-phải không
+    // xanh") — phép xoay cũ `rotated[y*dh + (dw-1-x)]` SAI khi dw>dh
+    // (sensor 1920×1080: cột ghi tới 639 trên buffer chỉ rộng 360 → TRÀN
+    // sang hàng kề, "ảnh xoay" thành ghép rác → mọi quét live/detector
+    // xoay đọc nội dung SAI VỊ TRÍ trên màn). Xoay 90° chuẩn:
+    //   CW : src(x, y) → dst(dh-1-y, x)   (Android sensorOrientation=90
+    //        — hầu hết máy; top mép sensor → mép phải khung dọc)
+    //   CCW: src(x, y) → dst(y, dw-1-x)   (sensorOrientation=270)
+    // [rotateCw] do UI chọn theo `sensorOrientation` của controller.
     final rotated = Uint8List(dw * dh);
-    for (var y = 0; y < dh; y++) {
-      for (var x = 0; x < dw; x++) {
-        rotated[y * dh + (dw - 1 - x)] = gray[y * dw + x];
+    if (rotateCw) {
+      for (var y = 0; y < dh; y++) {
+        final x0 = dh - 1 - y;
+        for (var x = 0; x < dw; x++) {
+          rotated[x * dh + x0] = gray[y * dw + x];
+        }
+      }
+    } else {
+      for (var y = 0; y < dh; y++) {
+        for (var x = 0; x < dw; x++) {
+          rotated[(dw - 1 - x) * dh + y] = gray[y * dw + x];
+        }
       }
     }
-    final rot = detector.detectGray(rotated, width: dh, height: dw);
+    final Uint8List displayGray = displayStraight ? gray : rotated;
+    final int dfw = displayStraight ? dw : dh; // rộng khung hiển thị
+    final int dfh = displayStraight ? dh : dw; // cao khung hiển thị
 
-    // Quy đổi ứng viên theo TỈ LỆ khung đã chọn (độc lập với f lấy mẫu).
-    _LiveFrame? build(MarkerDetection det, int fw, int fh) {
-      if (det.quad == null) return null;
-      if (!_uprightBox(det.quad!, landscapeDisplay)) {
-        return null; // nội dung không dựng đứng theo hướng màn
-      }
-      Offset frac(Offset p) => Offset(
-            (p.dx / fw).clamp(0.0, 1.0).toDouble(),
-            (p.dy / fh).clamp(0.0, 1.0).toDouble(),
-          );
-      final fq = det.quad!;
-      return _LiveFrame(
-        ready: true,
-        candidates: [
-          for (final c in det.candidates)
-            Offset(
-              (c.dx / fw).clamp(0.0, 1.0).toDouble(),
-              (c.dy / fh).clamp(0.0, 1.0).toDouble(),
-            ),
-        ],
-        // R3 (chỉ DEBUG dùng): quad theo tỉ lệ khung — painter pdbg.
-        quad: AlignmentQuad(frac(fq.tl), frac(fq.tr), frac(fq.br), frac(fq.bl)),
-        frameWidth: fw,
-        frameHeight: fh,
+    // Đèn xanh từng ô — không phụ thuộc detector toàn trang.
+    bool rectReads(Rect frac) {
+      int grayAtG(int x, int y) =>
+          displayGray[(y.clamp(0, dfh - 1)) * dfw + x.clamp(0, dfw - 1)];
+      // R8b (log11): cửa sổ quét PHÓNG 1.5× Y HỆT đường chụp
+      // (_rectExpandFactor). Chấp nhận: tâm blob nằm TRONG ô GỐC.
+      final rawRect = Rect.fromLTRB(
+        frac.left * dfw,
+        frac.top * dfh,
+        frac.right * dfw,
+        frac.bottom * dfh,
       );
+      final region = expandFractionRect(frac, 1.5);
+      // R9 (người dùng: "xanh CHỈ khi đọc được ô square"): ngưỡng so với
+      // Ô ĐEN IN kỳ vọng trên khung dọc — cạnh khối phải thuộc dải
+      // [0.12 × cạnh ngắn ô; 0.95 × cạnh ngắn ô]: glyph chữ/too smalls
+      // và dải bezel khổng lồ loại ở đây; fill 0.6 (ô in là khối đặc
+      // thật), aspect 0.6..1.65 (cột chữ/dải ngang loại).
+      final shortRect = math.min(rawRect.width, rawRect.height);
+      final locate = locateDarkBlobInRegion(
+        width: dfw,
+        height: dfh,
+        region: Rect.fromLTRB(
+          region.left * dfw,
+          region.top * dfh,
+          region.right * dfw,
+          region.bottom * dfh,
+        ),
+        grayAt: grayAtG,
+        minFill: 0.6,
+        aspectMin: 0.6,
+        aspectMax: 1.65,
+        minSidePx: math.max(4.0, shortRect * 0.12),
+        maxSidePx: shortRect * 0.95,
+      );
+      if (locate == null) return false;
+      final c = Offset(locate.centroid.dx / dfw, locate.centroid.dy / dfh);
+      return frac.contains(c);
     }
 
-    // Ưu tiên khung khớp HƯỚNG MÀN (R3.1): màn ngang → thẳng trước (buffer
-    // ngang ∥ màn ngang); màn dọc → xoay trước (sensor ngang + màn dọc).
-    if (landscapeDisplay) {
-      return build(straight, dw, dh) ?? build(rot, dh, dw);
-    }
-    return build(rot, dh, dw) ?? build(straight, dw, dh);
-  }
-
-  /// Bbox của quad có khớp HƯỚNG MÀN để nội dung "dựng đứng" trên preview:
-  /// màn dọc → phiếu dựng đứng ⇒ bbox CAO > RỘNG; màn ngang → phiếu nằm
-  /// NGANG theo khung màn (cùng tư thế đọc phiếu của TNMaker) ⇒ bbox
-  /// RỘNG > CAO.
-  static bool _uprightBox(AlignmentQuad quad, bool landscapeDisplay) {
-    final xs = <double>[quad.tl.dx, quad.tr.dx, quad.br.dx, quad.bl.dx];
-    final ys = <double>[quad.tl.dy, quad.tr.dy, quad.br.dy, quad.bl.dy];
-    final w = xs.reduce(math.max) - xs.reduce(math.min);
-    final h = ys.reduce(math.max) - ys.reduce(math.min);
-    return landscapeDisplay ? w > h : h > w;
+    // R11: BỎ Detector toàn trang trong tick live (yêu cầu người dùng:
+    // "rects phải chuyển xanh NGAY LẬP TỨC, chấm đỏ/quad xanh không hiển
+    // thị trên camera"). Detector quét toàn khung 2 hướng chiếm ~15-30 ms —
+    // nút cổ chai duy nhất của tick; đèn xanh KHÔNG phụ thuộc detector, và
+    // auto-capture chụp ảnh FULL-RES rồi pipeline chấm tự dò mốc trong
+    // isolate khác (không dùng quad live) → chạy detector live là phí CPU.
+    // Có mốc nếu cần ở chẩn đoán: hàm render bug painter đã xoá; đường chụp
+    // vẫn chạy detector riêng (detectGray trong scan_service).
+    final rectOk = [
+      for (final r in (rects ?? const <Rect>[]).toList().take(4))
+        rectReads(r),
+    ];
+    return rectOk;
   }
 
   @override
@@ -431,12 +500,19 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
       final file = await controller.takePicture();
       final bytes = await file.readAsBytes();
       if (!mounted) return;
-      // R2: khi có khung + 4 ô vuông → truyền quad ghim làm lưới phòng hờ:
-      // detector ưu tiên; detector bó tay mới warp theo vị trí ô vuông.
-      final overlay = _captureOverlayQuad();
+      // R5: 4 ô hình chữ nhật giáo viên căn → VÙNG NHẬN DIỆN của pipeline:
+      // quy ô (tâm + CỠ Ô thật) màn → khung qua cover mapping; pipeline
+      // quét toàn diện tích từng ô để tìm mốc (không còn quad "tâm nhắm").
+      final overlay = _captureOverlayRects();
+      // TEMPDBG: chẩn đoán chụp không đọc được phiếu.
+      debugPrint(
+          'DBG capture: frameCache=${_analysisFrameSize?.toString() ?? "chưa có"} '
+          'area=$_previewArea rects=${overlay?.$1} frame=${overlay?.$2} '
+          'box=$_markerBoxSize centers=$_squareCenters '
+          'đèn=${_rectScanOk == null ? "chưa" : [for (final o in _rectScanOk!) o ? "1" : "0"].join("")}');
       await _process(
         Uint8List.fromList(bytes),
-        overlayQuad: overlay?.$1,
+        overlayRects: overlay?.$1,
         frameSize: overlay?.$2 ?? const Size(1, 1),
       );
     } catch (e) {
@@ -445,21 +521,36 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     }
   }
 
-  /// R2: quad ghim theo hệ KHUNG HIỂN THỊ (nghịch của TỈ LỆ ô vuông xa tâm
-  /// khung có sẵn _liveMarkers) + kích thước khung — pipeline dùng làm lưới dự phòng.
-  (AlignmentQuad, Size)? _captureOverlayQuad() {
-    final lm = _liveMarkers;
+  /// R5: 4 ô HÌNH CHỮ NHẬT giáo viên căn trên preview, quy từ hệ MÀN HÌNH
+  /// sang TỈ LỆ KHUNG CAM (qua [CoverMapping.toFrame] từng góc — sửa cũ R2
+  /// nhân tỉ lệ màn × khung trực tiếp, sai vì màn là cover của khung), kèm
+  /// kích thước khung để pipeline quyết trục. Trả null khi chưa có khung
+  /// phân tích nào (chụp nhanh trước khi detector kịp chạy một frame).
+  (List<Rect>, Size)? _captureOverlayRects() {
+    // R6b: chỉ cần cỡ khung đã ghi từ luồng phân tích — không bắt buộc
+    // markers live (quad chưa đạt không được phép ném ô ghim đi).
+    final frame = _analysisFrameSize;
     final centers = _squareCenters;
-    if (lm == null || centers == null || centers.length < 4) return null;
-    Offset toFrame(Offset c) =>
-        Offset(c.dx * lm.frameWidth, c.dy * lm.frameHeight);
-    final quad = AlignmentQuad(
-      toFrame(centers[0]), // trái-trên
-      toFrame(centers[1]), // phải-trên
-      toFrame(centers[2]), // phải-dưới
-      toFrame(centers[3]), // trái-dưới
-    );
-    return (quad, lm.frameSize);
+    final area = _previewArea;
+    if (frame == null || area.width <= 0 || area.height <= 0) {
+      return null;
+    }
+    final mapping = CoverMapping(frame: frame, screen: area);
+    final box = _markerBoxSize;
+    final half = Offset(box.width / 2, box.height / 2);
+    final rects = <Rect>[];
+    for (var i = 0; i < 4; i++) {
+      final center = Offset(centers[i].dx * area.width, centers[i].dy * area.height);
+      final tl = mapping.toFrame(center - half);
+      final br = mapping.toFrame(center + half);
+      rects.add(Rect.fromLTRB(
+        tl.dx / frame.width,
+        tl.dy / frame.height,
+        br.dx / frame.width,
+        br.dy / frame.height,
+      ));
+    }
+    return (rects, frame);
   }
 
   /// Chọn ảnh phiếu từ tệp (dự phòng khi không có camera).
@@ -482,12 +573,13 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   /// Quét + chấm ảnh (isolate): đủ mốc (hoặc lượt 2 nới lỏng dựng nổi khung)
   /// → MÀN KẾT QUẢ R4; cả 2 lượt rớt → snackbar chụp lại (ở lại camera).
   ///
-  /// R2: \[overlayQuad\] + \[frameSize\] = quad ghim ở hệ khung hiển thị
-  /// (dự phòng khi detector bó tay); \[knownQuad\] = quad hệ ảnh chụp khi
-  /// biết chắc (hiếm — đường nắn tay đã ẩn R4).
+  /// R5: \[overlayRects\] = 4 ô hình chữ nhật theo TỈ LỆ khung — vùng nhận
+  /// diện mốc của pipeline (quét toàn diện tích ô); \[frameSize\] khung đó.
+  /// \[knownQuad\] = quad hệ ảnh chụp khi biết chắc (hiếm — đường nắn tay
+  /// đã ẩn R4).
   Future<void> _process(
     Uint8List bytes, {
-    AlignmentQuad? overlayQuad,
+    List<Rect>? overlayRects,
     Size frameSize = const Size(1, 1),
     AlignmentQuad? knownQuad,
   }) async {
@@ -504,7 +596,7 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
         contest: contest,
         keys: _keys,
         candidateStudents: _students,
-        overlayQuad: overlayQuad,
+        overlayRects: overlayRects,
         frameSize: frameSize,
         knownQuad: knownQuad,
       );
@@ -516,6 +608,17 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     }
     if (!mounted) return;
     setState(() => _busy = false);
+    // TEMPDBG (R7, log9): chụp #2 dừng im lặng sau gradeScan — log rõ kết
+    // cục để nhìn ra nằm ở chấm vs hiển thị.
+    if (graded == null) {
+      debugPrint('DBG process: graded=NULL');
+    } else {
+      debugPrint('DBG process: ${graded.graded ? "đã chấm" : "BỎ chấm (${graded.ungradedReason})"} '
+          'điểm=${graded.result.score.toStringAsFixed(2)} '
+          'đúng=${graded.result.correctCount}/${graded.result.correctFlags.length} '
+          'SBD=${graded.photo.scan.studentCodeRaw} mã đề=${graded.usedExamCode} '
+          'số đáp án=${graded.photo.scan.answers.length}');
+    }
     // R3 (chỉ DEBUG): lưu bằng chứng annotate qua isolate — KHÔNG chặn luồng
     // (fire-and-forget); bản release không hề chạy nhánh này.
     if (kDebugMode) {
@@ -567,17 +670,30 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
   /// CHỤP LẠI/back → pop về camera.
   Future<void> _showResult(GradedScan graded) async {
     if (!mounted) return;
+    debugPrint('DBG showResult: enter graded=${graded.graded}');
     final contest = _contest;
     if (contest == null) return;
     // R4: phiếu đã chấm TRƯỚC ĐÓ của kỳ thi — kiểm tra "Trùng SBD" card.
+    // R10 (fix treo): KHÔNG await provider .future nữa — Riverpod 3 stream
+    // provider với ref.read(.future) có thể KHÔNG NHỎ bao giờ phát giá trị
+    // đầu → _showResult treo vô hạn, không hiện màn kết quả (log13/14:
+    // "showResult: enter" rồi im lặng). Truy vấn THẲNG repository + timeout
+    // 2s làm an toàn: không có gì được phép chặn màn kết quả — lỗi đồng nghĩa
+    // "không trùng".
     List<GradedSheet> previousSheets = const [];
     try {
-      previousSheets =
-          await ref.read(gradedSheetsByContestProvider(contest.id).future);
+      previousSheets = await ref
+          .read(gradedSheetRepositoryProvider)
+          .watchByContest(contest.id)
+          .first
+          .timeout(const Duration(seconds: 2));
     } catch (_) {
       // Không lấy được danh sách cũ → coi như không trùng (chỉ là cảnh báo).
+    }    if (!mounted) {
+      debugPrint('DBG showResult: !mounted sau khi đọc phiếu cũ → BỎ hiển thị');
+      return;
     }
-    if (!mounted) return;
+    debugPrint('DBG showResult: sheets cũ=${previousSheets.length} → push');
     final layout =
         SheetLayout.forSpec(contest.sheetSpec, page: SheetLayout.standardPage);
     await Navigator.of(context).push<void>(
@@ -591,6 +707,7 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
         ),
       ),
     );
+    debugPrint('DBG showResult: hiển thị xong (pop)');
     // Quay về camera sau "CHỤP LẠI"/back: mở lại luồng phân tích preview.
     if (mounted && !_busy) {
       _startMarkerOverlay();
@@ -729,20 +846,9 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
           const ColoredBox(color: Colors.black),
           // Preview TRÀN MÀN — cùng kiểu render TNMaker.
           Positioned.fill(child: camera.buildPreview()),
-          // R3 (chỉ DEBUG): bằng chứng TRỰC QUAN trên preview — ứng viên
-          // ứng viên (chấm đỏ + nhãn) + quad (xanh lá) từ luồng phân tích khung.
-          if (kDebugMode && _liveMarkers != null)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: CustomPaint(
-                  painter: _DebugDetectionPainter(
-                    live: _liveMarkers!,
-                    area: _previewArea,
-                    origin: _previewOrigin,
-                  ),
-                ),
-              ),
-            ),
+          // R11: camera CHỈ hiển thị 4 ô rects — KHÔNG chấm đỏ/quạ xanh
+          // (_DebugDetectionPainter đã xoá theo yêu cầu: chỉ rects xanh khi
+          // khớp square).
           // obs_006: KHÔNG vẽ outline nét đứt — TN Maker chỉ hiển thị 4 ô
           // vuông trắng trên preview. R3.3: vị trí ô = calibration thực địa
           // (bản ngang, y hệt ảnh tham chiếu); kéo + snap + khoá giữ nguyên.
@@ -762,17 +868,8 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
               icon: const Icon(Icons.arrow_back, size: 20),
             ),
           ),
-          // Chỉ báo: pill xanh khi đủ 4 ô nằm trên mốc; ngược lại gợi ý canh.
-          Positioned(
-            left: 12,
-            right: 12,
-            bottom: 116 + safeBottom,
-            child: Center(
-              child: _StatePill(green: _allSquaresOnMarkers, label: _allSquaresOnMarkers
-                  ? l10n.scanMarkerOverlayLocated
-                  : l10n.scanDragHint),
-            ),
-          ),
+          // R11: bỏ pill "Đã đủ 4 mốc" (yêu cầu: không hiện thông báo, đủ
+          // 4 đèn xanh là tự chụp ngay).
           // R4: nút "Chỉnh thủ công" + toàn luồng GHIM MỐC ẨN theo yêu cầu
           // (CropReviewScreen giữ nguyên file, không còn được gọi).
           Positioned(
@@ -795,280 +892,77 @@ final class _ScanScreenState extends ConsumerState<ScanScreen> {
     });
   }
 
-  /// R3: 4 ô vuông mốc — vị trí mặc định theo CALIBRATION THỰC ĐỊA
-  /// ([MarkerOverlayCalibration.forArea], chuyển sang bản NGANG trên màn
-  /// ngang: ô 203×157 sát mép, y hệt ảnh tham chiếu); kéo tự do (R2), snap
-  /// khi detector tự tìm được, khoá → viền xanh. Danh sách THAY ĐỔI ĐƯỢC
-  /// (không `const`) — R2-fix: _moveSquare gán phần tử (bug demo
-  /// 2026-10-23: `const <Offset>[...]` làm ô đứng im vì UnsupportedError
-  /// bị nuốt trong setState).
+  /// R8 (2026-10-25): 4 ô vuông mốc CỐ ĐỊNH theo calibration
+  /// ([MarkerOverlayCalibration.forArea]) — giáo viên DI CHUYỂN CAMERA cho
+  /// ô khớp ô đen trên phiếu (y hệt TN Maker), KHÔNG kéo ô (yêu cầu trực
+  /// tiếp người dung trên). Viền XANH từng ô = [_rectScanOk]: phép quét
+  /// CHÍNH XÁC như khi chụp đọc được mốc trong ô (وبác bỏ ý nghĩa cũ
+  /// "detector thấy candidate gần ô" — trên phiếu qua màn hình candidate
+  /// gồm cả glyph chi).
   List<Widget> _buildSquares() {
     final area = _previewArea;
-    if (_squareCenters == null && area.width > 0) {
-      _squareCenters = <Offset>[
-        ...MarkerOverlayCalibration.forArea(area).centerFractions,
-      ];
-    }
+    if (area == Size.zero) return const [];
     final centers = _squareCenters;
-    if (centers == null) return const [];
-    final locks = _lockStates() ?? const <bool>[false, false, false, false];
+    final lights = _rectScanOk ?? const <bool>[false, false, false, false];
     final box = _markerBoxSize;
     final squares = <Widget>[];
     for (var i = 0; i < 4 && i < centers.length; i++) {
       final c = centers[i];
       final px =
           _previewOrigin + Offset(c.dx * area.width, c.dy * area.height);
-      // obs_006 (TN Maker): ô TRẮNG ĐẶC, KHÔNG viền, KHÔNG bóng đổ — giáo
-      // viên kéo ô trắng đè bao trọn ô đen in trên phiếu. Ô KHÓA (detector
-      // bám chắc mốc): viền xanh + nền bớt đục để thấy mốc đã khớp bên dưới.
-      // R3 (y hệt TNMaker): nền TRẮNG MỜ phẳng (~32% trên nền camera đen →
-      // hiện xám nhạt như ảnh tham chiếu), GÓC VUÔNG, KHÔNG SỐ bên trong —
-      // ô chỉ là mục tiêu căn phiếu, không phải nút nhãn.
-      final locked = i < locks.length ? locks[i] : false;
-      final fillColor = locked
+      // obs_006 (TN Maker): nền TRẮNG MỜ phẳng, GÓC VUÔNG, KHÔNG SỐ — ô
+      // chỉ là mục tiêu căn phiếu. R8: ô ĐỌC ĐƯỢC mốc → nền đục hơn +
+      // VIỀN XANH (ý nghĩa: phép quét khi chụp sẽ đạt); chưa → trong suốt.
+      final ok = i < lights.length ? lights[i] : false;
+      final fillColor = ok
           ? Colors.white.withValues(alpha: 0.55)
           : Colors.white.withValues(alpha: 0.32);
-      final borderColor =
-          locked ? const Color(0xFF2E7D32) : Colors.transparent;
-      // Trục hit phải rộng hơn trục vẽ (pad 12 mỗi phía) để ngón tay kéo
-      // được cả ô mốc nhỏ khi camera gần phiếu.
-      const hitPad = 12.0;
+      final borderColor = ok ? const Color(0xFF2E7D32) : Colors.transparent;
       squares.add(Positioned(
-        key: ObjectKey(i),
-        left: px.dx - box.width / 2 - hitPad,
-        top: px.dy - box.height / 2 - hitPad,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onPanStart: (_) => _draggingIndex = i,
-          onPanUpdate: (d) => _moveSquare(i, d.delta),
-          onPanEnd: (_) {
-            _draggingIndex = null;
-            // Kéo tay xong: tắt snap cho ô này — giữ đúng vị trí giáo viên.
-            if (_autoSnap[i]) setState(() => _autoSnap[i] = false);
-          },
-          onPanCancel: () => _draggingIndex = null,
-          child: Padding(
-            padding: const EdgeInsets.all(hitPad),
-            child: Container(
-              width: box.width,
-              height: box.height,
-              decoration: BoxDecoration(
-                color: fillColor,
-                borderRadius: BorderRadius.zero,
-                border: Border.all(color: borderColor, width: locked ? 3 : 0),
-              ),
-              // R3: KHÔNG số 1..4 bên trong (y hệt TNMaker) — ô trống hoàn
-              // toàn để không che khuất ô mốc đen đặt bên dưới khi căn phiếu.
-            ),
+        left: px.dx - box.width / 2,
+        top: px.dy - box.height / 2,
+        child: Container(
+          width: box.width,
+          height: box.height,
+          decoration: BoxDecoration(
+            color: fillColor,
+            borderRadius: BorderRadius.zero,
+            border: Border.all(color: borderColor, width: 3),
           ),
+          // KHÔNG số 1..4 bên trong (y hệt TNMaker) — ô trống hoàn toàn
+          // để không che khuất ô mốc đen đặt bên dưới khi căn phiếu.
         ),
       ));
     }
     return squares;
   }
-
-  /// R2: kéo ô vuông — cập nhật TỈ LỆ, kẹp biên (cách mép ít nhất 4%).
-  void _moveSquare(int index, Offset delta) {
-    final area = _previewArea;
-    if (area.width <= 0 || area.height <= 0) return;
-    setState(() {
-      final c = _squareCenters![index];
-      final next = Offset(
-        c.dx + delta.dx / area.width,
-        c.dy + delta.dy / area.height,
-      );
-      _squareCenters![index] = Offset(
-        next.dx.clamp(0.04, 0.96).toDouble(),
-        next.dy.clamp(0.04, 0.96).toDouble(),
-      );
-    });
-  }
-
-  /// R2: đủ 4 mốc? — cả 4 ô tâm nằm trong bán kính khoá của ứng viên mốc màn hình.
-  bool get _allSquaresOnMarkers {
-    final states = _lockStates();
-    if (states == null) return false;
-    return states.every((locked) => locked);
-  }
-
-  /// R3: trạng thái khoá từng ô (null khi chưa đủ dữ liệu preview).
-  List<bool>? _lockStates() {
-    final centers = _squareCenters;
-    final lm = _liveMarkers;
-    final area = _previewArea;
-    if (centers == null || lm == null || area == Size.zero) return null;
-    final frame = lm.frameSize;
-    final mapping = CoverMapping(frame: frame, screen: area);
-    final candidates = <Offset>[
-      for (final c in lm.candidates)
-        mapping.toScreen(Offset(c.dx * frame.width, c.dy * frame.height)),
-    ];
-    return squareLockStates(
-      [
-        for (final c in centers)
-          Offset(c.dx * area.width, c.dy * area.height),
-      ],
-      candidates,
-      _lockRadius,
-    );
-  }
 }
 
-/// R3 (chỉ DEBUG): vẽ KẾT QUẢ phân tích khung mới nhất lên preview —
-/// ứng viên mốc (chấm đỏ + nhãn cN) và quad 4 góc (xanh lá). Mục tiêu:
-/// chứng minh bằng mắt trên thiết bị là detector khoá đúng 4 ô vuông đen
-/// in trên phiếu, KHÔNG phải bong bóng/vật thể lân cận.
-final class _DebugDetectionPainter extends CustomPainter {
-  const _DebugDetectionPainter({
-    required this.live,
-    required this.area,
-    required this.origin,
-  });
-
-  final _LiveFrame live;
-  final Size area;
-
-  /// R3.2: góc vùng preview trong canvas — điểm quy đổi từ khung camera
-  /// là toạ độ TRONG vùng preview; vẽ lên canvas toàn màn cần cộng gốc.
-  final Offset origin;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (area == Size.zero) return;
-    final mapping = CoverMapping(frame: live.frameSize, screen: area);
-
-    void text(Offset p, String label, Color color) {
-      final tp = TextPainter(
-        text: TextSpan(
-          text: label,
-          style: TextStyle(
-            color: color,
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      tp.paint(canvas, p + origin);
-    }
-
-    // Quad xanh lá.
-    final quad = live.quad;
-    if (quad != null) {
-      final paint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 3
-        ..color = const Color(0x9920C05A);
-      final pts = <Offset>[
-        origin +
-            mapping.toScreen(Offset(
-              quad.tl.dx * live.frameSize.width,
-              quad.tl.dy * live.frameSize.height,
-            )),
-        origin +
-            mapping.toScreen(Offset(
-              quad.tr.dx * live.frameSize.width,
-              quad.tr.dy * live.frameSize.height,
-            )),
-        origin +
-            mapping.toScreen(Offset(
-              quad.br.dx * live.frameSize.width,
-              quad.br.dy * live.frameSize.height,
-            )),
-        mapping.toScreen(Offset(
-          quad.bl.dx * live.frameSize.width,
-          quad.bl.dy * live.frameSize.height,
-        )),
-      ];
-      for (var i = 0; i < pts.length; i++) {
-        canvas.drawCircle(pts[i], 7, Paint()..color = const Color(0xDD1E9E44));
-        text(pts[i] + const Offset(10, 2), '${i + 1}', Colors.white);
-        final next = pts[(i + 1) % pts.length];
-        canvas.drawLine(pts[i], next, paint);
-      }
-    }
-    // Ứng viên đỏ + nhãn.
-    final dot = Paint()..color = const Color(0xDDEB4A4A);
-    for (var i = 0; i < live.candidates.length; i++) {
-      final c = live.candidates[i];
-      final p = mapping.toScreen(
-          Offset(c.dx * live.frameSize.width, c.dy * live.frameSize.height));
-      canvas.drawCircle(p, 5, dot);
-      text(p + const Offset(6, -14), 'c$i', dot.color);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_DebugDetectionPainter oldDelegate) =>
-      oldDelegate.live != live || oldDelegate.area != area;
+/// R6 wrapper FOR isolate: gọi từ instance method nhưng là hàm TOP-LEVEL —
+/// closure của Isolate.run chỉ chụp các tham số sendable (Uint8List, int,
+/// `List<Rect>` — Rect/Bool list sendable), không chụp `this`/`_controller`
+/// (đối tượng chứa Future — unsendable, gây "object is unsendable" mỗi khung
+/// và giết cả luồng phân tích live).
+///
+/// R8: trả về bản ghi (_LiveFrame?, rectOk — đèn xanh từng ô).
+/// R11: chỉ trả `List<bool>` đèn xanh — detector toàn trang đã bỏ khỏi tick
+/// live (đèn độc lập với detector; chụp vẫn dò mốc riêng trong isolate).
+Future<List<bool>> _analyzeMarkerFrameInIsolate(
+    Uint8List planeBytes, int stride, int width, int height,
+    List<Rect>? rects,
+    {bool rotateCw = true}) {
+  return Isolate.run(() => _ScanScreenState._analyzeMarkerFrame(
+      planeBytes, stride, width, height,
+      rects: rects, rotateCw: rotateCw));
 }
 
-/// R2: pill trạng thái overlay — xanh khi đủ 4 ô nằm trên mốc, nhạt khi
-/// đang để giáo viên kéo/thiếu mốc.
-final class _StatePill extends StatelessWidget {
-  const _StatePill({required this.green, required this.label});
-
-  final bool green;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      decoration: BoxDecoration(
-        color: green ? Colors.green.shade700 : Colors.black54,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            green ? Icons.check_circle_outline : Icons.crop_square_outlined,
-            color: Colors.white,
-            size: 18,
-          ),
-          const SizedBox(width: 6),
-          // R2-fix: chữ dài (hint kéo ô) tràn phải khi một dòng — cho phép
-          // xuống tối đa 2 dòng rồi mới cắt bớt (ellipsis).
-          Flexible(
-            child: Text(
-              label,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white),
-            ),
-          ),
-        ],
-      ),
-    );
+/// R8: đèn xanh đổi trạng thái? (chỉ in log khi ĐỔI — tránh nổ log 4 lần/s).
+bool _sameLights(List<bool>? a, List<bool> b) {
+  if (a == null || a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
   }
-}
-
-/// R2: kết quả phân tích 1 khung preview (plain-data, gửi isolate được):
-/// ứng viên mốc theo TỈ LỆ khung hiển thị + kích thước khung đã chọn.
-final class _LiveFrame {
-  const _LiveFrame({
-    required this.ready,
-    required this.candidates,
-    required this.frameWidth,
-    required this.frameHeight,
-    this.quad,
-  });
-
-  /// Detector tìm đủ 4 mốc góc theo phương hướng này.
-  final bool ready;
-
-  /// Ứng viên (TỈ LỆ 0..1 của khung đã chọn).
-  final List<Offset> candidates;
-
-  /// R3 (debug): quad 4 mốc góc theo TỈ LỆ khung đã chọn (null khi không có).
-  final AlignmentQuad? quad;
-
-  final int frameWidth;
-  final int frameHeight;
-
-  Size get frameSize =>
-      Size(frameWidth.toDouble(), frameHeight.toDouble());
+  return true;
 }
 
 /// Nút chọn ảnh từ tệp (trên preview và trong màn dự phòng).

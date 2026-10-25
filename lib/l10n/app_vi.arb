@@ -95,7 +95,7 @@
 
   "gradeResultRetake": "CHỤP LẠI",
   "gradeResultKeep": "GIỮ",
-  "warnTitle": "Warning !!!",
+  "warnTitle": "Cảnh báo",
   "warnDuplicateLabel": "Trùng SBD",
   "warnDuplicateNone": "Không trùng",
   "warnDuplicateYes": "Có",
